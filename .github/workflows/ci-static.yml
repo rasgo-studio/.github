@@ -1,0 +1,52 @@
+# Reusable RASGO CI, static sites (Nuxt) (DEV-02, D-086): task-code branch, tests, lint and build.
+# Usage in each repository (.github/workflows/ci.yml):
+#
+#   name: CI
+#   on: [pull_request]
+#   jobs:
+#     ci:
+#       uses: rasgo-studio/.github/.github/workflows/ci-static.yml@main
+#
+name: CI
+
+on:
+  workflow_call:
+    inputs:
+      node-version:
+        type: string
+        default: "22"
+
+jobs:
+  # The branch starts with a Plane identifier and a number (ACME01WEB-23-slug, ROPS-12-slug).
+  # Dependabot and release-please branches are excluded. If it does not comply, it fails before testing anything.
+  branch:
+    if: ${{ github.event_name == 'pull_request' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Branch with task code
+        env:
+          BRANCH: ${{ github.head_ref }}
+        run: |
+          if printf '%s' "$BRANCH" | grep -Eq '^(dependabot/|release-please--)'; then exit 0; fi
+          if ! printf '%s' "$BRANCH" | grep -Eq '^[A-Z][A-Z0-9]*-[0-9]+-[A-Za-z0-9._-]+$'; then
+            echo "La rama $BRANCH no empieza por un identificador de Plane y un número (DEV-02)."
+            exit 1
+          fi
+
+  node:
+    needs: branch
+    if: ${{ always() && (needs.branch.result == 'success' || needs.branch.result == 'skipped') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: npm
+      - run: npm ci
+      - name: Lint
+        run: npm run lint --if-present
+      - name: Build
+        run: npm run build
+      - name: Tests
+        run: npm test --if-present
