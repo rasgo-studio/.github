@@ -17,7 +17,7 @@ on:
         default: "22"
 
 jobs:
-  # The branch starts with a Plane identifier and a number (ACME01WEB-23-slug, ROPS-12-slug).
+  # The branch starts with a Plane identifier and a number (ACME01WEB-23-slug, RMGT-12-slug).
   # Dependabot and release-please branches are excluded. If it does not comply, it fails before testing anything.
   branch:
     if: ${{ github.event_name == 'pull_request' }}
