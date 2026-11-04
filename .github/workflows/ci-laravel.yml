@@ -1,4 +1,4 @@
-# Reusable RASGO CI, Laravel (DEV-02, D-086): task-code branch, tests, lint and build.
+# Reusable RASGO CI, Laravel (DEV-02, D-086): task-code branch, then tests, lint and build once the app exists.
 # Usage in each repository (.github/workflows/ci.yml):
 #
 #   name: CI
@@ -36,9 +36,30 @@ jobs:
             exit 1
           fi
 
+  # A repository born from rasgo-template-laravel has no app until its first development task creates it: without
+  # composer.json there is nothing to lint, build or test, so the laravel job is skipped instead of failing.
+  app:
+    runs-on: ubuntu-latest
+    outputs:
+      laravel: ${{ steps.check.outputs.laravel }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: composer.json
+          sparse-checkout-cone-mode: false
+      - name: Laravel app present
+        id: check
+        run: |
+          if [ -f composer.json ]; then
+            echo "laravel=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::Todavía no hay app Laravel (sin composer.json): solo se comprueba la rama."
+            echo "laravel=false" >> "$GITHUB_OUTPUT"
+          fi
+
   laravel:
-    needs: branch
-    if: ${{ always() && (needs.branch.result == 'success' || needs.branch.result == 'skipped') }}
+    needs: [branch, app]
+    if: ${{ always() && needs.app.outputs.laravel == 'true' && (needs.branch.result == 'success' || needs.branch.result == 'skipped') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
