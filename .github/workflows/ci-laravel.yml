@@ -14,7 +14,7 @@ on:
     inputs:
       php-version:
         type: string
-        default: "8.3"
+        default: "8.5"
       node-version:
         type: string
         default: "22"
