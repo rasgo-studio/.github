@@ -219,6 +219,11 @@ cmd_start() {
       fail "Core no confirma la aprobación: $(reason_text "$reason") ($rule). No se toca el servidor."
       ;;
     401) fail "Core no acepta el token de despliegue (401): revisa RASGO_CORE_DEPLOY_TOKEN. No se despliega." ;;
+    # 422: the request does not validate, such as a contract key that looks like a secret (PLN-11).
+    422)
+      reason="$(jq -r '.error // .message // "petición no válida"' "$response" 2> /dev/null || printf 'petición no válida')"
+      fail "Core rechaza la petición de deploy-start (422): $reason No se despliega."
+      ;;
     *) fail "Core respondió $code a deploy-start. No se despliega." ;;
   esac
   rm -f "$request" "$response"

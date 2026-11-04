@@ -229,6 +229,9 @@ check "start: calls deploy-start on Core" grep -Fxq "https://core.test/api/v1/de
 check "start: the body carries the approval tuple" test "$(jq -r '[.repository, .app, .environment, .commit_sha, .approval_id, .task] | join(" ")' "$FAKE/request.start.json")" = "rasgo-studio/acme-portal acme-portal production $SHA 01JAPPROVAL ACME01WEB-23"
 check "start: the body carries the run url" test "$(jq -r .run_url "$FAKE/request.start.json")" = "https://github.com/rasgo-studio/acme-portal/actions/runs/42"
 check "start: no rollback_of when there is none" test "$(jq 'has("rollback_of")' "$FAKE/request.start.json")" = false
+# Core answers 422 when any key of the contract looks like a secret (DeployContractCheck of rasgo-core, PLN-11).
+check "start: the contract goes without keys that look like secrets" test "$(jq '[.contract | paths | .[] | strings | select(test("secret|token|password|passwd|private[_-]?key|api[_-]?key|credential"; "i"))] | length' "$FAKE/request.start.json")" = 0
+check "start: the contract keeps the rest" test "$(jq -r '.contract.environments.production.approval' "$FAKE/request.start.json")" = core
 check "start: the token goes in a header" grep -Fq "Authorization: Bearer token-secret-value" "$FAKE/headers"
 check "start: the token is not on the command line" test "$(grep -c token-secret-value "$FAKE/args")" = 0
 
@@ -268,6 +271,12 @@ core contract
 export CORE_TOKEN=t
 answer start 201 '{}'
 expect_fail "start: a 201 without deployment_id stops the deploy" "sin deployment_id" start
+
+setup
+core contract
+export CORE_TOKEN=t
+answer start 422 '{"error":"The deploy contract must not carry secrets: environments.staging.secrets.","rule":"PLN-11"}'
+expect_fail "start: a 422 says why Core refuses the request" "must not carry secrets" start
 
 # --- health -----------------------------------------------------------------------------------------------------
 
