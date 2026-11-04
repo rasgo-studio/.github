@@ -225,9 +225,17 @@ cmd_start() {
 }
 
 body_has_version() {
-  local body="$1" commit version pattern
+  local body="$1" commit version pattern served
   commit="$(state_get commit)"
   version="$(state_get version)"
+  # A JSON body that names its commit (version.json) answers by the commit alone: the release before can carry the same
+  # version number, as when rasgo-core records the API version and the health host is a static app.
+  served="$(jq -r 'if type == "object" and has("commit") then .commit | tostring else empty end' "$body" 2>/dev/null || true)"
+  if [ -n "$served" ]; then
+    [ "$served" = "$commit" ] && return 0
+    [ "${#served}" -ge 7 ] && [ "${commit#"$served"}" != "$commit" ] && return 0
+    return 1
+  fi
   grep -Fq "$commit" "$body" && return 0
   grep -Fq "$(short "$commit")" "$body" && return 0
   [ -n "$version" ] || return 1

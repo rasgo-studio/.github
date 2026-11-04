@@ -297,6 +297,32 @@ expect_fail "health: another version is not this one (timeout)" "no sirve la ver
 check "health: state failed" test "$(state health)" = failed
 
 setup
+export DEPLOY_ENVIRONMENT=production APPROVAL_ID=a GITHUB_REF_TYPE=tag GITHUB_REF_NAME=acme-v1.4.0
+core contract
+jq '.health_timeout = "1"' "$RASGO_STATE" > "$RASGO_STATE.tmp" && mv "$RASGO_STATE.tmp" "$RASGO_STATE"
+export HEALTH_INTERVAL=1
+answer health 200 '{"app":"web","version":"1.4.0","commit":"aaaaaaabbbbbbb"}'
+expect_fail "health: the same version from another commit is the old release" "no sirve la versión 1.4.0" health
+
+setup
+export DEPLOY_ENVIRONMENT=production APPROVAL_ID=a GITHUB_REF_TYPE=tag GITHUB_REF_NAME=acme-v1.4.0
+core contract
+answer health 200 "{\"app\":\"web\",\"version\":\"2.0.0\",\"commit\":\"$SHA\"}"
+expect_ok "health: with a commit field, the full commit counts whatever the version" health
+
+setup
+core contract
+answer health 200 "{\"app\":\"web\",\"version\":\"2.0.0\",\"commit\":\"${SHA:0:10}\"}"
+expect_ok "health: with a commit field, a prefix of the commit counts" health
+
+setup
+core contract
+jq '.health_timeout = "1"' "$RASGO_STATE" > "$RASGO_STATE.tmp" && mv "$RASGO_STATE.tmp" "$RASGO_STATE"
+export HEALTH_INTERVAL=1
+answer health 200 "{\"app\":\"web\",\"commit\":\"${SHA:0:4}\"}"
+expect_fail "health: a commit shorter than 7 characters does not count" "no sirve la versión" health
+
+setup
 sed -i 's|  timeout_s: 5|  expect: status\n  timeout_s: 5|' rasgo.deploy.yml
 core contract
 answer health 200 'hello'
