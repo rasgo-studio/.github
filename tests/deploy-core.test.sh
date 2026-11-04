@@ -390,6 +390,21 @@ expect_fail "finish: says when the deploy stays open in Core" "queda abierto en 
 
 setup
 core contract
+export CORE_TOKEN=t
+jq '.deployment_id = "42" | .health = "ok"' "$RASGO_STATE" > "$RASGO_STATE.tmp" && mv "$RASGO_STATE.tmp" "$RASGO_STATE"
+answer finish 409 '{"error":"This deployment is already success."}'
+expect_ok "finish: a deploy Core already closed (409) does not fail the run" finish
+check "finish: warns about the 409" has "ya tenía cerrado el despliegue 42"
+
+setup
+core contract
+export CORE_TOKEN=t
+jq '.deployment_id = "42" | .health = "ok"' "$RASGO_STATE" > "$RASGO_STATE.tmp" && mv "$RASGO_STATE.tmp" "$RASGO_STATE"
+answer finish 404 '{"error":"This deployment does not exist."}'
+expect_fail "finish: a deploy Core does not know (404)" "no conoce el despliegue 42" finish
+
+setup
+core contract
 export CORE_TOKEN=t VERSIONS='not json'
 jq '.deployment_id = "01JDEPLOY" | .health = "ok"' "$RASGO_STATE" > "$RASGO_STATE.tmp" && mv "$RASGO_STATE.tmp" "$RASGO_STATE"
 expect_fail "finish: versions must be a JSON object" "no es un objeto JSON" finish

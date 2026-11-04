@@ -308,6 +308,12 @@ cmd_finish() {
       note "Core registra el despliegue $id: $result."
       summary "- Core: despliegue $id cerrado como $result."
       ;;
+    # 409: the deploy is no longer started, as when a retry arrives after Core already closed it. Nothing stays open.
+    409)
+      echo "::warning::Core ya tenía cerrado el despliegue $id (409): no se registra otra vez como $result."
+      summary "- Core: el despliegue $id ya estaba cerrado."
+      ;;
+    404) fail "Core no conoce el despliegue $id (404): este despliegue ($result) no queda registrado." ;;
     *) fail "Core respondió $code a deploy-finish: el despliegue $id ($result) queda abierto en Core." ;;
   esac
   rm -f "$request" "$response"
