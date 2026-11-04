@@ -1,0 +1,131 @@
+# Reusable RASGO deploy, WordPress on Ploi (RINF-54, WFA-01.1, D-104): reads rasgo.deploy.yml, asks RASGO Core with
+# deploy-start, calls the Ploi deploy webhook of the site (its deploy script pulls the repository and builds the
+# theme), checks the health path and closes the deploy in Core with deploy-finish. Production only deploys with an
+# approval_id that Core confirms. Since RINF-4 an Action no longer reaches the servers by SSH: Ploi does the deploy.
+# Usage in each repository (.github/workflows/deploy.yml), with the secrets in its staging and production environments:
+#
+#   name: Deploy
+#   on:
+#     workflow_dispatch:
+#       inputs:
+#         environment: { type: choice, options: [production, staging], default: production }
+#         approval_id: { type: string, required: false }
+#         rollback_of: { type: string, required: false }
+#         task: { type: string, required: false }
+#   jobs:
+#     deploy:
+#       uses: rasgo-studio/.github/.github/workflows/deploy-wordpress.yml@main
+#       with:
+#         environment: ${{ inputs.environment }}
+#         approval_id: ${{ inputs.approval_id }}
+#         rollback_of: ${{ inputs.rollback_of }}
+#         task: ${{ inputs.task }}
+#       secrets: inherit
+#
+name: Deploy
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        description: staging or production, as in rasgo.deploy.yml
+        type: string
+        required: true
+      approval_id:
+        description: Approval of Core for this commit (production, and any environment with approval core)
+        type: string
+        default: ""
+      rollback_of:
+        description: deployment_id of the failed deploy that this one undoes (Core allows it without a new approval)
+        type: string
+        default: ""
+      task:
+        description: Plane task code (ACME01WEB-23), so Core can report the result on it
+        type: string
+        default: ""
+      app:
+        description: App name in Core, when it is not the component of the contract
+        type: string
+        default: ""
+      version:
+        description: Version to record in Core; by default the number of the tag, or the short commit
+        type: string
+        default: ""
+      ploi-branch:
+        description: Branch the Ploi site pulls, when the environment deploys a tag
+        type: string
+        default: main
+    secrets:
+      RASGO_CORE_DEPLOY_TOKEN:
+        description: Core token of the deploy actor (ops 1)
+        required: false
+      PLOI_DEPLOY_WEBHOOK:
+        description: Deploy webhook of the Ploi site of this environment
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    # The secrets come from this environment of the calling repository (DEV-07).
+    environment: ${{ inputs.environment }}
+    concurrency:
+      group: deploy-${{ github.repository }}-${{ inputs.environment }}
+      cancel-in-progress: false
+    env:
+      DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
+      DEPLOY_ADAPTERS: wordpress
+      APPROVAL_ID: ${{ inputs.approval_id }}
+      ROLLBACK_OF: ${{ inputs.rollback_of }}
+      TASK: ${{ inputs.task }}
+      APP: ${{ inputs.app }}
+      VERSION: ${{ inputs.version }}
+      PLOI_BRANCH: ${{ inputs.ploi-branch }}
+      CORE_URL: ${{ vars.RASGO_CORE_URL || 'https://api.rasgo.studio' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: rasgo.deploy.yml
+          sparse-checkout-cone-mode: false
+      - name: Contract
+        uses: rasgo-studio/.github/actions/deploy-core@main
+        with:
+          command: contract
+      - name: Secrets
+        uses: rasgo-studio/.github/actions/deploy-core@main
+        env:
+          RASGO_CORE_DEPLOY_TOKEN: ${{ secrets.RASGO_CORE_DEPLOY_TOKEN }}
+          PLOI_DEPLOY_WEBHOOK: ${{ secrets.PLOI_DEPLOY_WEBHOOK }}
+        with:
+          command: require
+          args: RASGO_CORE_DEPLOY_TOKEN PLOI_DEPLOY_WEBHOOK
+      # Ploi pulls the head of its branch, not a commit: only that head can be the approved commit.
+      - name: Branch the server pulls
+        uses: rasgo-studio/.github/actions/deploy-core@main
+        with:
+          command: branch-head
+      - name: Start (Core checks the approval)
+        uses: rasgo-studio/.github/actions/deploy-core@main
+        env:
+          CORE_TOKEN: ${{ secrets.RASGO_CORE_DEPLOY_TOKEN }}
+        with:
+          command: start
+      - name: Deploy (Ploi)
+        env:
+          WEBHOOK: ${{ secrets.PLOI_DEPLOY_WEBHOOK }}
+        run: |
+          curl -fsS -X POST --max-time 30 -o /dev/null "$WEBHOOK"
+          echo "Despliegue pedido a Ploi."
+      - name: Health
+        uses: rasgo-studio/.github/actions/deploy-core@main
+        with:
+          command: health
+      - name: Finish (record in Core)
+        if: always()
+        uses: rasgo-studio/.github/actions/deploy-core@main
+        env:
+          CORE_TOKEN: ${{ secrets.RASGO_CORE_DEPLOY_TOKEN }}
+        with:
+          command: finish
