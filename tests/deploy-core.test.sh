@@ -88,7 +88,7 @@ health:
   timeout_s: 5
 rollback: previous-tag
 EOF
-  unset APPROVAL_ID ROLLBACK_OF TASK APP VERSION VERSIONS PLOI_BRANCH CORE_TOKEN OUTPUT_DIR CONTRACT_FILE
+  unset APPROVAL_ID ROLLBACK_OF TASK RUN_ID APP VERSION VERSIONS PLOI_BRANCH CORE_TOKEN OUTPUT_DIR CONTRACT_FILE
   export FAKE_DIR="$FAKE" PATH="$FAKE/bin:$PATH" RASGO_STATE="$WORK/state.json" HEALTH_INTERVAL=0
   export GITHUB_SHA="$SHA" GITHUB_REPOSITORY="rasgo-studio/acme-portal" GITHUB_SERVER_URL="https://github.com"
   export GITHUB_RUN_ID=42 GITHUB_REF_TYPE=branch GITHUB_REF_NAME=main GITHUB_STEP_SUMMARY="$WORK/summary"
@@ -277,6 +277,41 @@ core contract
 export CORE_TOKEN=t
 answer start 422 '{"error":"The deploy contract must not carry secrets: environments.staging.secrets.","rule":"PLN-11"}'
 expect_fail "start: a 422 says why Core refuses the request" "must not carry secrets" start
+
+# --- run_id: X-Rasgo-Run (RINF-71) ------------------------------------------------------------------------------
+
+setup
+export RUN_ID=314
+expect_ok "run_id: the contract accepts the number of a run" contract
+check "run_id: saved in the state" test "$(state run_id)" = 314
+check "run_id: the contract step says it" has "unido al run 314"
+export CORE_TOKEN=token-secret-value
+answer start 201 '{"deployment_id":"01JDEPLOY"}'
+expect_ok "run_id: start" start
+jq '.health = "ok"' "$RASGO_STATE" > "$RASGO_STATE.tmp" && mv "$RASGO_STATE.tmp" "$RASGO_STATE"
+answer finish 200 '{}'
+expect_ok "run_id: finish" finish
+check "run_id: deploy-start and deploy-finish both carry X-Rasgo-Run" test "$(grep -cFx "X-Rasgo-Run: 314" "$FAKE/headers")" = 2
+check "run_id: the header goes with the token, in the header file" test "$(grep -c "X-Rasgo-Run" "$FAKE/args")" = 0
+check "run_id: the bodies stay the same" test "$(jq 'has("run_id")' "$FAKE/request.start.json") $(jq 'has("run_id")' "$FAKE/request.finish.json")" = "false false"
+
+setup
+expect_ok "no run_id: the contract" contract
+check "no run_id: empty in the state" test -z "$(state run_id)"
+export CORE_TOKEN=t
+answer start 201 '{"deployment_id":"01JDEPLOY"}'
+expect_ok "no run_id: start" start
+jq '.health = "ok"' "$RASGO_STATE" > "$RASGO_STATE.tmp" && mv "$RASGO_STATE.tmp" "$RASGO_STATE"
+answer finish 200 '{}'
+expect_ok "no run_id: finish" finish
+check "no run_id: no request carries X-Rasgo-Run" test "$(grep -c "X-Rasgo-Run" "$FAKE/headers")" = 0
+check "no run_id: the token still goes in both" test "$(grep -cFx "Authorization: Bearer t" "$FAKE/headers")" = 2
+check "no run_id: the contract step says nothing about a run" test "$(grep -c "unido al run" "$OUT")" = 0
+
+setup
+export RUN_ID="12; rm"
+expect_fail "run_id: anything but digits stops at the contract" "no es el número de un run" contract
+check "run_id: nothing saved after the refusal" test ! -f "$RASGO_STATE"
 
 # --- health -----------------------------------------------------------------------------------------------------
 

@@ -11,6 +11,8 @@
 #
 # Core is the barrier: without an answer from Core nothing deploys, and there is no emergency exit (RINF-54).
 # The state of one deploy lives in a JSON file between steps; it holds names and ids, never a secret.
+# With RUN_ID (the input run_id), deploy-start and deploy-finish carry X-Rasgo-Run, so Core ties the deploy to the run
+# that asked for it (RCOR-45, deployments.run_id). Without it, both requests are the same as before (RINF-71).
 # Messages are in Spanish, for the person who reads the run (AGT-03).
 set -euo pipefail
 
@@ -53,11 +55,13 @@ yaml_to_json() {
 # POST to Core: path, request file, response file. Prints the HTTP code; fails only when Core cannot be reached.
 # The token goes in a header file, so it never shows in the command line of the runner.
 core_post() {
-  local path="$1" request="$2" response="$3" headers code rc=0
+  local path="$1" request="$2" response="$3" headers run code rc=0
   shift 3
   headers="$(mktemp)"
   chmod 600 "$headers"
   printf 'Authorization: Bearer %s\n' "${CORE_TOKEN:-}" > "$headers"
+  run="$(state_get run_id 2> /dev/null || true)"
+  if [ -n "$run" ]; then printf 'X-Rasgo-Run: %s\n' "$run" >> "$headers"; fi
   code="$(curl -sS --max-time 30 "$@" -X POST -H @"$headers" -H 'Content-Type: application/json' \
     -H 'Accept: application/json' --data-binary @"$request" -o "$response" -w '%{http_code}' \
     "$CORE_URL/api/v1/$path")" || rc=$?
@@ -77,7 +81,7 @@ cmd_require() {
 
 cmd_contract() {
   local file="${CONTRACT_FILE:-rasgo.deploy.yml}" env="${DEPLOY_ENVIRONMENT:-}" json
-  local adapter component ref url approval path expect timeout version app branch public tag
+  local adapter component ref url approval path expect timeout version app branch public tag run_id
 
   case "$env" in
     staging | production) ;;
@@ -136,6 +140,12 @@ cmd_contract() {
   [ -n "$version" ] || version="$(short "$GITHUB_SHA")"
   app="${APP:-$component}"
 
+  # The run of Core this deploy belongs to: its number, or nothing (RINF-71). Core ignores a number that is no run.
+  run_id="${RUN_ID:-}"
+  case "$run_id" in
+    *[!0-9]*) fail "run_id «$run_id» no es el número de un run de Core: solo cifras, o vacío." ;;
+  esac
+
   # Core keeps the contract it receives (spec 003, Clarify 7), without the names of the secrets.
   public="$(jq -c 'del(.environments[]?.secrets)' <<< "$json")"
 
@@ -143,13 +153,14 @@ cmd_contract() {
     --arg ref "$ref" --arg tag "$tag" --arg branch "$branch" --arg url "${url%/}" --arg approval "$approval" \
     --arg health_path "$path" --arg health_expect "$expect" --arg health_timeout "$timeout" \
     --arg version "$version" --arg commit "${GITHUB_SHA:?}" --arg approval_id "${APPROVAL_ID:-}" \
-    --arg rollback_of "${ROLLBACK_OF:-}" --arg task "${TASK:-}" --argjson contract "$public" \
+    --arg rollback_of "${ROLLBACK_OF:-}" --arg task "${TASK:-}" --arg run_id "$run_id" --argjson contract "$public" \
     '{component: $component, app: $app, adapter: $adapter, environment: $environment, ref: $ref, tag: $tag,
       branch: $branch, url: $url, approval: $approval, health_path: $health_path, health_expect: $health_expect,
       health_timeout: $health_timeout, version: $version, commit: $commit, approval_id: $approval_id,
-      rollback_of: $rollback_of, task: $task, contract: $contract}' > "$STATE"
+      rollback_of: $rollback_of, task: $task, run_id: $run_id, contract: $contract}' > "$STATE"
 
   note "Contrato correcto: $component ($adapter) a $env, $url, versión $version, commit $(short "$GITHUB_SHA"), aprobación: $approval."
+  if [ -n "$run_id" ]; then note "El despliegue queda unido al run $run_id de Core (X-Rasgo-Run)."; fi
   summary "- Contrato: $component ($adapter) a $env, versión $version, commit $(short "$GITHUB_SHA")."
 }
 

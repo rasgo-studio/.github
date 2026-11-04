@@ -14,6 +14,7 @@
 #         approval_id: { type: string, required: false }
 #         rollback_of: { type: string, required: false }
 #         task: { type: string, required: false }
+#         run_id: { type: string, required: false }
 #   jobs:
 #     deploy:
 #       uses: rasgo-studio/.github/.github/workflows/deploy-laravel.yml@main
@@ -22,6 +23,7 @@
 #         approval_id: ${{ inputs.approval_id }}
 #         rollback_of: ${{ inputs.rollback_of }}
 #         task: ${{ inputs.task }}
+#         run_id: ${{ inputs.run_id }}
 #       secrets: inherit
 #
 name: Deploy
@@ -43,6 +45,10 @@ on:
         default: ""
       task:
         description: Plane task code (ACME01WEB-23), so Core can report the result on it
+        type: string
+        default: ""
+      run_id:
+        description: Number of the RASGO Core run this deploy belongs to; sent as X-Rasgo-Run to deploy-start and deploy-finish
         type: string
         default: ""
       app:
@@ -86,6 +92,7 @@ jobs:
       APPROVAL_ID: ${{ inputs.approval_id }}
       ROLLBACK_OF: ${{ inputs.rollback_of }}
       TASK: ${{ inputs.task }}
+      RUN_ID: ${{ inputs.run_id }}
       APP: ${{ inputs.app }}
       VERSION: ${{ inputs.version }}
       VERSIONS: ${{ inputs.versions }}
