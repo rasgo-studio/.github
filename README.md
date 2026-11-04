@@ -122,7 +122,9 @@ Every deploy follows the same order, and stops at the first step that fails:
    the server (WFA-01.1, D-104). If Core does not answer, nothing deploys: there is no emergency exit.
 4. **Deploy.** The adapter: the Ploi webhook, or the upload to Cloudflare Pages.
 5. **Health.** Asks `url` + `health.path` until it answers with this commit (full or short) or this version, up to
-   `health.timeout_s`. With `expect: status` it only checks that the site answers, which does not prove the new code is live.
+   `health.timeout_s`. A JSON answer with a `commit` field, such as a `version.json`, counts only by that commit: the
+   release before may carry the same version number. With `expect: status` it only checks that the site answers,
+   which does not prove the new code is live.
 6. **deploy-finish.** Closes the deploy in Core with `success`, `failure` or, for a healthy rollback, `rolled_back`.
    It runs even when an earlier step failed, so failed deploys are recorded too.
 

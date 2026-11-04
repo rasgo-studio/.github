@@ -229,6 +229,9 @@ check "start: calls deploy-start on Core" grep -Fxq "https://core.test/api/v1/de
 check "start: the body carries the approval tuple" test "$(jq -r '[.repository, .app, .environment, .commit_sha, .approval_id, .task] | join(" ")' "$FAKE/request.start.json")" = "rasgo-studio/acme-portal acme-portal production $SHA 01JAPPROVAL ACME01WEB-23"
 check "start: the body carries the run url" test "$(jq -r .run_url "$FAKE/request.start.json")" = "https://github.com/rasgo-studio/acme-portal/actions/runs/42"
 check "start: no rollback_of when there is none" test "$(jq 'has("rollback_of")' "$FAKE/request.start.json")" = false
+# Core answers 422 when any key of the contract looks like a secret (DeployContractCheck of rasgo-core, PLN-11).
+check "start: the contract goes without keys that look like secrets" test "$(jq '[.contract | paths | .[] | strings | select(test("secret|token|password|passwd|private[_-]?key|api[_-]?key|credential"; "i"))] | length' "$FAKE/request.start.json")" = 0
+check "start: the contract keeps the rest" test "$(jq -r '.contract.environments.production.approval' "$FAKE/request.start.json")" = core
 check "start: the token goes in a header" grep -Fq "Authorization: Bearer token-secret-value" "$FAKE/headers"
 check "start: the token is not on the command line" test "$(grep -c token-secret-value "$FAKE/args")" = 0
 
@@ -269,6 +272,12 @@ export CORE_TOKEN=t
 answer start 201 '{}'
 expect_fail "start: a 201 without deployment_id stops the deploy" "sin deployment_id" start
 
+setup
+core contract
+export CORE_TOKEN=t
+answer start 422 '{"error":"The deploy contract must not carry secrets: environments.staging.secrets.","rule":"PLN-11"}'
+expect_fail "start: a 422 says why Core refuses the request" "must not carry secrets" start
+
 # --- health -----------------------------------------------------------------------------------------------------
 
 setup
@@ -295,6 +304,32 @@ export HEALTH_INTERVAL=1
 answer health 200 '{"version":"11.4.0"}'
 expect_fail "health: another version is not this one (timeout)" "no sirve la versión 1.4.0" health
 check "health: state failed" test "$(state health)" = failed
+
+setup
+export DEPLOY_ENVIRONMENT=production APPROVAL_ID=a GITHUB_REF_TYPE=tag GITHUB_REF_NAME=acme-v1.4.0
+core contract
+jq '.health_timeout = "1"' "$RASGO_STATE" > "$RASGO_STATE.tmp" && mv "$RASGO_STATE.tmp" "$RASGO_STATE"
+export HEALTH_INTERVAL=1
+answer health 200 '{"app":"web","version":"1.4.0","commit":"aaaaaaabbbbbbb"}'
+expect_fail "health: the same version from another commit is the old release" "no sirve la versión 1.4.0" health
+
+setup
+export DEPLOY_ENVIRONMENT=production APPROVAL_ID=a GITHUB_REF_TYPE=tag GITHUB_REF_NAME=acme-v1.4.0
+core contract
+answer health 200 "{\"app\":\"web\",\"version\":\"2.0.0\",\"commit\":\"$SHA\"}"
+expect_ok "health: with a commit field, the full commit counts whatever the version" health
+
+setup
+core contract
+answer health 200 "{\"app\":\"web\",\"version\":\"2.0.0\",\"commit\":\"${SHA:0:10}\"}"
+expect_ok "health: with a commit field, a prefix of the commit counts" health
+
+setup
+core contract
+jq '.health_timeout = "1"' "$RASGO_STATE" > "$RASGO_STATE.tmp" && mv "$RASGO_STATE.tmp" "$RASGO_STATE"
+export HEALTH_INTERVAL=1
+answer health 200 "{\"app\":\"web\",\"commit\":\"${SHA:0:4}\"}"
+expect_fail "health: a commit shorter than 7 characters does not count" "no sirve la versión" health
 
 setup
 sed -i 's|  timeout_s: 5|  expect: status\n  timeout_s: 5|' rasgo.deploy.yml
@@ -361,6 +396,21 @@ export CORE_TOKEN=t
 jq '.deployment_id = "01JDEPLOY" | .health = "ok"' "$RASGO_STATE" > "$RASGO_STATE.tmp" && mv "$RASGO_STATE.tmp" "$RASGO_STATE"
 answer finish 500 '{}'
 expect_fail "finish: says when the deploy stays open in Core" "queda abierto en Core" finish
+
+setup
+core contract
+export CORE_TOKEN=t
+jq '.deployment_id = "42" | .health = "ok"' "$RASGO_STATE" > "$RASGO_STATE.tmp" && mv "$RASGO_STATE.tmp" "$RASGO_STATE"
+answer finish 409 '{"error":"This deployment is already success."}'
+expect_ok "finish: a deploy Core already closed (409) does not fail the run" finish
+check "finish: warns about the 409" has "ya tenía cerrado el despliegue 42"
+
+setup
+core contract
+export CORE_TOKEN=t
+jq '.deployment_id = "42" | .health = "ok"' "$RASGO_STATE" > "$RASGO_STATE.tmp" && mv "$RASGO_STATE.tmp" "$RASGO_STATE"
+answer finish 404 '{"error":"This deployment does not exist."}'
+expect_fail "finish: a deploy Core does not know (404)" "no conoce el despliegue 42" finish
 
 setup
 core contract

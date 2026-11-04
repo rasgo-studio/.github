@@ -219,15 +219,28 @@ cmd_start() {
       fail "Core no confirma la aprobación: $(reason_text "$reason") ($rule). No se toca el servidor."
       ;;
     401) fail "Core no acepta el token de despliegue (401): revisa RASGO_CORE_DEPLOY_TOKEN. No se despliega." ;;
+    # 422: the request does not validate, such as a contract key that looks like a secret (PLN-11).
+    422)
+      reason="$(jq -r '.error // .message // "petición no válida"' "$response" 2> /dev/null || printf 'petición no válida')"
+      fail "Core rechaza la petición de deploy-start (422): $reason No se despliega."
+      ;;
     *) fail "Core respondió $code a deploy-start. No se despliega." ;;
   esac
   rm -f "$request" "$response"
 }
 
 body_has_version() {
-  local body="$1" commit version pattern
+  local body="$1" commit version pattern served
   commit="$(state_get commit)"
   version="$(state_get version)"
+  # A JSON body that names its commit (version.json) answers by the commit alone: the release before can carry the same
+  # version number, as when rasgo-core records the API version and the health host is a static app.
+  served="$(jq -r 'if type == "object" and has("commit") then .commit | tostring else empty end' "$body" 2>/dev/null || true)"
+  if [ -n "$served" ]; then
+    [ "$served" = "$commit" ] && return 0
+    [ "${#served}" -ge 7 ] && [ "${commit#"$served"}" != "$commit" ] && return 0
+    return 1
+  fi
   grep -Fq "$commit" "$body" && return 0
   grep -Fq "$(short "$commit")" "$body" && return 0
   [ -n "$version" ] || return 1
@@ -300,6 +313,12 @@ cmd_finish() {
       note "Core registra el despliegue $id: $result."
       summary "- Core: despliegue $id cerrado como $result."
       ;;
+    # 409: the deploy is no longer started, as when a retry arrives after Core already closed it. Nothing stays open.
+    409)
+      echo "::warning::Core ya tenía cerrado el despliegue $id (409): no se registra otra vez como $result."
+      summary "- Core: el despliegue $id ya estaba cerrado."
+      ;;
+    404) fail "Core no conoce el despliegue $id (404): este despliegue ($result) no queda registrado." ;;
     *) fail "Core respondió $code a deploy-finish: el despliegue $id ($result) queda abierto en Core." ;;
   esac
   rm -f "$request" "$response"
