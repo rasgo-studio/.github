@@ -40,7 +40,7 @@ stack: laravel
 adapter: laravel-ploi
 environments:
   staging:
-    ref: dev
+    ref: main
     url: https://staging.example.com
     approval: none
     secrets: [PLOI_DEPLOY_WEBHOOK]
