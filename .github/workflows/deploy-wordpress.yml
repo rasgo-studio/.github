@@ -56,6 +56,9 @@ on:
         type: string
         default: main
     secrets:
+      BWS_ACCESS_TOKEN:
+        description: Token of the Bitwarden Secrets Manager machine account that reads the actions project (D-109); without it, the secrets below come from GitHub as before
+        required: false
       RASGO_CORE_DEPLOY_TOKEN:
         description: Core token of the deploy actor (ops 1)
         required: false
@@ -93,13 +96,18 @@ jobs:
         uses: rasgo-studio/.github/actions/deploy-core@main
         with:
           command: contract
+      # From Bitwarden when the environment has BWS_ACCESS_TOKEN, from the GitHub secrets otherwise (D-109, RINF-55).
+      # The values are masked and left for the next steps of this job, which read them from env.
       - name: Secrets
         uses: rasgo-studio/.github/actions/deploy-core@main
         env:
+          BWS_ACCESS_TOKEN: ${{ secrets.BWS_ACCESS_TOKEN }}
+          BWS_PROJECT_ID: ${{ vars.BWS_PROJECT_ID }}
+          BWS_SERVER_URL: ${{ vars.BWS_SERVER_URL || 'https://vault.bitwarden.eu' }}
           RASGO_CORE_DEPLOY_TOKEN: ${{ secrets.RASGO_CORE_DEPLOY_TOKEN }}
           PLOI_DEPLOY_WEBHOOK: ${{ secrets.PLOI_DEPLOY_WEBHOOK }}
         with:
-          command: require
+          command: secrets
           args: RASGO_CORE_DEPLOY_TOKEN PLOI_DEPLOY_WEBHOOK
       # Ploi pulls the head of its branch, not a commit: only that head can be the approved commit.
       - name: Branch the server pulls
@@ -109,12 +117,12 @@ jobs:
       - name: Start (Core checks the approval)
         uses: rasgo-studio/.github/actions/deploy-core@main
         env:
-          CORE_TOKEN: ${{ secrets.RASGO_CORE_DEPLOY_TOKEN }}
+          CORE_TOKEN: ${{ env.RASGO_CORE_DEPLOY_TOKEN }}
         with:
           command: start
       - name: Deploy (Ploi)
         env:
-          WEBHOOK: ${{ secrets.PLOI_DEPLOY_WEBHOOK }}
+          WEBHOOK: ${{ env.PLOI_DEPLOY_WEBHOOK }}
         run: |
           curl -fsS -X POST --max-time 30 -o /dev/null "$WEBHOOK"
           echo "Despliegue pedido a Ploi."
@@ -126,6 +134,6 @@ jobs:
         if: always()
         uses: rasgo-studio/.github/actions/deploy-core@main
         env:
-          CORE_TOKEN: ${{ secrets.RASGO_CORE_DEPLOY_TOKEN }}
+          CORE_TOKEN: ${{ env.RASGO_CORE_DEPLOY_TOKEN }}
         with:
           command: finish
