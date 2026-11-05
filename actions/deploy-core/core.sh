@@ -93,11 +93,14 @@ bws_keys() {
   printf '%s\n' "$name"
 }
 
-# bws on the PATH, or the pinned release of bitwarden/sdk-sm checked against its sha256 (BWS_SHA256 when it is set,
-# the checksum file of the same release otherwise).
+# bws on the PATH, or the pinned release of bitwarden/sdk-sm checked against its sha256: the one pinned here for
+# 2.1.0 (from bws-sha256-checksums-2.1.0.txt, the same as rasgo-motor), BWS_SHA256 when it is set, or for another
+# BWS_VERSION the checksum file of that release.
+BWS_PINNED_VERSION=2.1.0
+BWS_PINNED_SHA256=ba8233c3a4aee5d43e3c73bbd04d99e9bc5aba13bbbfd06d89b073abe732b860
 ensure_bws() {
   command -v bws > /dev/null 2>&1 && return 0
-  local version="${BWS_VERSION:-2.1.0}" dir base url sum expected
+  local version="${BWS_VERSION:-$BWS_PINNED_VERSION}" dir base url sum expected
   dir="${RUNNER_TEMP:-/tmp}/bws-$version"
   base="https://github.com/bitwarden/sdk-sm/releases/download/bws-v$version"
   mkdir -p "$dir"
@@ -106,6 +109,8 @@ ensure_bws() {
   sum="$(sha256sum "$dir/bws.zip" | cut -d' ' -f1)"
   if [ -n "${BWS_SHA256:-}" ]; then
     expected="$BWS_SHA256"
+  elif [ "$version" = "$BWS_PINNED_VERSION" ]; then
+    expected="$BWS_PINNED_SHA256"
   else
     curl -fsSL --max-time 30 -o "$dir/sums.txt" "$base/bws-sha256-checksums-$version.txt" ||
       fail "No se pudo descargar la suma sha256 de bws $version."

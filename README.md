@@ -152,7 +152,7 @@ Calling them:
   - **While they move (RINF-55).** A name not found in Bitwarden is taken from the GitHub secret of the same name, and
     the run warns with its name. Without `BWS_ACCESS_TOKEN` everything comes from GitHub, as before. A name in
     neither place stops the deploy.
-  - **How.** `bws` (bitwarden/sdk-sm, pinned version, checked against its sha256) reads the project with the
+  - **How.** `bws` (bitwarden/sdk-sm 2.1.0, checked against the sha256 pinned in `core.sh`, the same as rasgo-motor) reads the project with the
     machine account. Each value is masked and left for the next steps of the job, and the run names the keys it
     used, never a value. If Bitwarden does not answer, nothing deploys. Optional repository variables:
     `BWS_PROJECT_ID` (read only that project) and `BWS_SERVER_URL` (another region).
