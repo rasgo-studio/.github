@@ -134,6 +134,11 @@ Calling them:
   this one undoes) and `task` (the Plane code, so Core can report on it), plus `app`, `version` and, for a monorepo,
   `versions` (a JSON object with the version of each app). `deploy-static.yml` also takes `pages-project`,
   `build-command`, `output-dir`, `production-branch` and `staging-branch`.
+- **Tying a deploy to its run.** `deploy-laravel.yml` takes `run_id`, the number of the RASGO Core run the deploy
+  belongs to. With it, deploy-start and deploy-finish carry the header `X-Rasgo-Run: <run_id>` and Core keeps the
+  deploy in `deployments.run_id`, as an artifact of that run (RCOR-45). Only digits are accepted, and the Contract
+  step stops on anything else. Without it, neither request carries the header and the deploy works as before. Core
+  ignores a number that is not one of its runs.
 - **Secrets** live in the `staging` and `production` environments of the calling repository, with the names its
   contract lists (DEV-07): `RASGO_CORE_DEPLOY_TOKEN` always (the Core token of the deploy actor, ops 1), then
   `PLOI_DEPLOY_WEBHOOK`, or `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`. The repository variable
