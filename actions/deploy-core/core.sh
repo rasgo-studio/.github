@@ -2,6 +2,7 @@
 # Steps shared by the reusable deploy workflows of rasgo-studio (RINF-54, WFA-01.1, D-104).
 #
 #   core.sh require NAME...    the named environment variables (the secrets the adapter reads) are set
+#   core.sh secrets NAME...    the same, read from Bitwarden Secrets Manager when BWS_ACCESS_TOKEN is set (D-109)
 #   core.sh contract           reads rasgo.deploy.yml, checks it against this run and saves the deploy state
 #   core.sh branch-head        the branch the Ploi site pulls is still at the commit of this run
 #   core.sh version-file [DIR] writes DIR (or OUTPUT_DIR)/version.json with component, version and commit
@@ -77,6 +78,97 @@ cmd_require() {
   done
   [ -z "$missing" ] || fail "Faltan secretos en el entorno ${DEPLOY_ENVIRONMENT:-}:$missing. Van en el entorno del repositorio, con el nombre que lista rasgo.deploy.yml (DEV-07)."
   note "Secretos presentes: $*"
+}
+
+# Key of NAME in Bitwarden for this deploy, most specific first: NAME__<COMPONENT>__<ENVIRONMENT>, NAME__<COMPONENT>,
+# NAME. One project (actions) holds the secrets of every repository, so a value that differs per site carries its
+# component and environment in the key, in capitals with anything else as _ (acme-portal, production:
+# PLOI_DEPLOY_WEBHOOK__ACME_PORTAL__PRODUCTION).
+bws_keys() {
+  local name="$1" component environment
+  component="$(state_get component 2> /dev/null | tr '[:lower:]' '[:upper:]' | tr -c 'A-Z0-9\n' '_' || true)"
+  environment="$(printf '%s' "${DEPLOY_ENVIRONMENT:-}" | tr '[:lower:]' '[:upper:]' | tr -c 'A-Z0-9' '_')"
+  if [ -n "$component" ] && [ -n "$environment" ]; then printf '%s\n' "${name}__${component}__${environment}"; fi
+  if [ -n "$component" ]; then printf '%s\n' "${name}__${component}"; fi
+  printf '%s\n' "$name"
+}
+
+# bws on the PATH, or the pinned release of bitwarden/sdk-sm checked against its sha256 (BWS_SHA256 when it is set,
+# the checksum file of the same release otherwise).
+ensure_bws() {
+  command -v bws > /dev/null 2>&1 && return 0
+  local version="${BWS_VERSION:-2.1.0}" dir base url sum expected
+  dir="${RUNNER_TEMP:-/tmp}/bws-$version"
+  base="https://github.com/bitwarden/sdk-sm/releases/download/bws-v$version"
+  mkdir -p "$dir"
+  url="$base/bws-x86_64-unknown-linux-gnu-$version.zip"
+  curl -fsSL --max-time 60 -o "$dir/bws.zip" "$url" || fail "No se pudo descargar bws $version de bitwarden/sdk-sm."
+  sum="$(sha256sum "$dir/bws.zip" | cut -d' ' -f1)"
+  if [ -n "${BWS_SHA256:-}" ]; then
+    expected="$BWS_SHA256"
+  else
+    curl -fsSL --max-time 30 -o "$dir/sums.txt" "$base/bws-sha256-checksums-$version.txt" ||
+      fail "No se pudo descargar la suma sha256 de bws $version."
+    expected="$(grep "bws-x86_64-unknown-linux-gnu-$version.zip" "$dir/sums.txt" | cut -d' ' -f1)"
+  fi
+  [ -n "$expected" ] && [ "$sum" = "$expected" ] || fail "La suma sha256 de bws $version no coincide; no se usa."
+  unzip -oq "$dir/bws.zip" -d "$dir"
+  chmod +x "$dir/bws"
+  PATH="$dir:$PATH"
+  note "bws $version comprobado (sha256 $sum)."
+}
+
+# NAME=value for the next steps of the job: every line masked first, then written with a delimiter of its own.
+export_secret() {
+  local name="$1" value="$2" line delimiter
+  while IFS= read -r line; do
+    if [ -n "$line" ]; then printf '::add-mask::%s\n' "$line"; fi
+  done <<< "$value"
+  delimiter="rasgo_$(od -An -N8 -tx1 /dev/urandom | tr -d ' \n')"
+  if [ -n "${GITHUB_ENV:-}" ]; then printf '%s<<%s\n%s\n%s\n' "$name" "$delimiter" "$value" "$delimiter" >> "$GITHUB_ENV"; fi
+}
+
+# Each NAME from Bitwarden Secrets Manager (the machine account of BWS_ACCESS_TOKEN, EU region), or else from the
+# GitHub secret of the same name while it has not been moved (RINF-55): the run says which, never the value.
+cmd_secrets() {
+  local name list key value missing="" from_bws="" from_github=""
+  if [ -n "${BWS_ACCESS_TOKEN:-}" ]; then
+    ensure_bws
+    list="$(mktemp)"
+    chmod 600 "$list"
+    if [ -n "${BWS_PROJECT_ID:-}" ]; then
+      BWS_SERVER_URL="${BWS_SERVER_URL:-https://vault.bitwarden.eu}" bws secret list "$BWS_PROJECT_ID" --output json > "$list" 2> /dev/null ||
+        { rm -f "$list"; fail "Bitwarden Secrets Manager no responde con el token de este entorno; no se despliega."; }
+    else
+      BWS_SERVER_URL="${BWS_SERVER_URL:-https://vault.bitwarden.eu}" bws secret list --output json > "$list" 2> /dev/null ||
+        { rm -f "$list"; fail "Bitwarden Secrets Manager no responde con el token de este entorno; no se despliega."; }
+    fi
+  fi
+  for name in "$@"; do
+    value=""
+    if [ -n "${list:-}" ]; then
+      while IFS= read -r key; do
+        if jq -e --arg k "$key" 'any(.[]; .key == $k)' "$list" > /dev/null; then
+          value="$(jq -r --arg k "$key" '[.[] | select(.key == $k)][0].value' "$list")"
+          from_bws="$from_bws $key"
+          break
+        fi
+      done < <(bws_keys "$name")
+    fi
+    if [ -z "$value" ] && [ -n "${!name:-}" ]; then
+      value="${!name}"
+      from_github="$from_github $name"
+    fi
+    if [ -z "$value" ]; then missing="$missing $name"; continue; fi
+    export_secret "$name" "$value"
+  done
+  if [ -n "${list:-}" ]; then rm -f "$list"; fi
+  [ -z "$missing" ] || fail "Faltan secretos en el entorno ${DEPLOY_ENVIRONMENT:-}:$missing. Van en Bitwarden Secrets Manager, proyecto actions, con el nombre que lista rasgo.deploy.yml (D-109)."
+  if [ -n "$from_bws" ]; then note "Desde Bitwarden:$from_bws"; fi
+  if [ -n "$from_github" ]; then
+    note "Desde los secrets de GitHub:$from_github"
+    if [ -n "${BWS_ACCESS_TOKEN:-}" ]; then printf '::warning::Aún no están en Bitwarden:%s (RINF-55).\n' "$from_github"; fi
+  fi
 }
 
 cmd_contract() {
@@ -340,6 +432,7 @@ main() {
   shift || true
   case "$command" in
     require) cmd_require "$@" ;;
+    secrets) cmd_secrets "$@" ;;
     contract) cmd_contract ;;
     branch-head) cmd_branch_head ;;
     version-file) cmd_version_file "$@" ;;
@@ -347,7 +440,7 @@ main() {
     health) cmd_health ;;
     finish) cmd_finish ;;
     *)
-      note "Uso: core.sh require|contract|branch-head|version-file|start|health|finish"
+      note "Uso: core.sh require|secrets|contract|branch-head|version-file|start|health|finish"
       exit 2
       ;;
   esac

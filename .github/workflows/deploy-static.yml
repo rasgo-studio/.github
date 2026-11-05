@@ -83,6 +83,9 @@ on:
         type: string
         default: 4.151.0
     secrets:
+      BWS_ACCESS_TOKEN:
+        description: Token of the Bitwarden Secrets Manager machine account that reads the actions project (D-109); without it, the secrets below come from GitHub as before
+        required: false
       RASGO_CORE_DEPLOY_TOKEN:
         description: Core token of the deploy actor (ops 1)
         required: false
@@ -120,16 +123,7 @@ jobs:
         uses: rasgo-studio/.github/actions/deploy-core@main
         with:
           command: contract
-      - name: Secrets
-        uses: rasgo-studio/.github/actions/deploy-core@main
-        env:
-          RASGO_CORE_DEPLOY_TOKEN: ${{ secrets.RASGO_CORE_DEPLOY_TOKEN }}
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        with:
-          command: require
-          args: RASGO_CORE_DEPLOY_TOKEN CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID
-      # The build comes before deploy-start, so a broken build does not spend the approval.
+      # The build comes before the secrets and deploy-start, so a broken build does not spend the approval.
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ inputs.node-version }}
@@ -141,16 +135,30 @@ jobs:
         uses: rasgo-studio/.github/actions/deploy-core@main
         with:
           command: version-file
+      # From Bitwarden when the environment has BWS_ACCESS_TOKEN, from the GitHub secrets otherwise (D-109, RINF-55).
+      # After the build, so the build never sees a secret. The values are masked and left for the next steps of this job, which read them from env.
+      - name: Secrets
+        uses: rasgo-studio/.github/actions/deploy-core@main
+        env:
+          BWS_ACCESS_TOKEN: ${{ secrets.BWS_ACCESS_TOKEN }}
+          BWS_PROJECT_ID: ${{ vars.BWS_PROJECT_ID }}
+          BWS_SERVER_URL: ${{ vars.BWS_SERVER_URL || 'https://vault.bitwarden.eu' }}
+          RASGO_CORE_DEPLOY_TOKEN: ${{ secrets.RASGO_CORE_DEPLOY_TOKEN }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        with:
+          command: secrets
+          args: RASGO_CORE_DEPLOY_TOKEN CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID
       - name: Start (Core checks the approval)
         uses: rasgo-studio/.github/actions/deploy-core@main
         env:
-          CORE_TOKEN: ${{ secrets.RASGO_CORE_DEPLOY_TOKEN }}
+          CORE_TOKEN: ${{ env.RASGO_CORE_DEPLOY_TOKEN }}
         with:
           command: start
       - name: Deploy (Cloudflare Pages)
         env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ env.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ env.CLOUDFLARE_ACCOUNT_ID }}
           PAGES_PROJECT: ${{ inputs.pages-project }}
           PAGES_BRANCH: ${{ inputs.environment == 'production' && inputs.production-branch || inputs.staging-branch }}
           WRANGLER_VERSION: ${{ inputs.wrangler-version }}
@@ -165,6 +173,6 @@ jobs:
         if: always()
         uses: rasgo-studio/.github/actions/deploy-core@main
         env:
-          CORE_TOKEN: ${{ secrets.RASGO_CORE_DEPLOY_TOKEN }}
+          CORE_TOKEN: ${{ env.RASGO_CORE_DEPLOY_TOKEN }}
         with:
           command: finish

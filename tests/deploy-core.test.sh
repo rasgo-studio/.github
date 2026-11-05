@@ -207,6 +207,67 @@ expect_ok "require: all secrets present" require RASGO_CORE_DEPLOY_TOKEN PLOI_DE
 check "require: the values are not printed" test "$(grep -c '^x$\|^y$' "$OUT")" = 0
 unset PLOI_DEPLOY_WEBHOOK RASGO_CORE_DEPLOY_TOKEN
 
+# --- secrets ----------------------------------------------------------------------------------------------------
+
+# A fake bws: answers `bws secret list [project] --output json` from bws.json and records its server and arguments.
+fake_bws() {
+  cat > "$FAKE/bin/bws" << 'EOF'
+#!/usr/bin/env bash
+printf '%s|%s|%s\n' "${BWS_SERVER_URL:-}" "${BWS_ACCESS_TOKEN:+token}" "$*" >> "$FAKE_DIR/bws.calls"
+[ ! -f "$FAKE_DIR/bws.down" ] || exit 1
+cat "$FAKE_DIR/bws.json"
+EOF
+  chmod +x "$FAKE/bin/bws"
+  printf '%s' "$1" > "$FAKE/bws.json"
+}
+env_value() { # name: the value the step left for the next ones in GITHUB_ENV
+  awk -v n="$1" '$0 ~ "^"n"<<" { split($0, a, "<<"); d = a[2]; on = 1; next } on && $0 == d { on = 0; next } on { print }' "$GITHUB_ENV"
+}
+
+setup
+core contract
+export DEPLOY_ENVIRONMENT=production GITHUB_ENV="$WORK/github_env" BWS_ACCESS_TOKEN=bootstrap
+unset BWS_SERVER_URL BWS_PROJECT_ID PLOI_DEPLOY_WEBHOOK RASGO_CORE_DEPLOY_TOKEN
+fake_bws '[{"key":"RASGO_CORE_DEPLOY_TOKEN","value":"core-token"},{"key":"PLOI_DEPLOY_WEBHOOK","value":"generic"},{"key":"PLOI_DEPLOY_WEBHOOK__ACME_PORTAL__PRODUCTION","value":"site-hook"}]'
+expect_ok "secrets: all from Bitwarden" secrets RASGO_CORE_DEPLOY_TOKEN PLOI_DEPLOY_WEBHOOK
+check "secrets: the key of the component and environment wins" test "$(env_value PLOI_DEPLOY_WEBHOOK)" = site-hook
+check "secrets: a shared key by its plain name" test "$(env_value RASGO_CORE_DEPLOY_TOKEN)" = core-token
+check "secrets: each value is masked" grep -Fq '::add-mask::site-hook' "$OUT"
+check "secrets: no value is printed outside the mask" test "$(grep -v '::add-mask::' "$OUT" | grep -c 'site-hook\|core-token')" = 0
+check "secrets: bws asks the EU region" grep -Fq 'https://vault.bitwarden.eu|token|secret list --output json' "$FAKE/bws.calls"
+check "secrets: the run names the keys it used" has "PLOI_DEPLOY_WEBHOOK__ACME_PORTAL__PRODUCTION"
+
+setup
+core contract
+export DEPLOY_ENVIRONMENT=staging GITHUB_ENV="$WORK/github_env" BWS_ACCESS_TOKEN=bootstrap BWS_PROJECT_ID=p1
+export PLOI_DEPLOY_WEBHOOK=from-github
+unset RASGO_CORE_DEPLOY_TOKEN
+fake_bws '[{"key":"RASGO_CORE_DEPLOY_TOKEN__ACME_PORTAL","value":"component-token"}]'
+expect_ok "secrets: one in Bitwarden, one still in GitHub" secrets RASGO_CORE_DEPLOY_TOKEN PLOI_DEPLOY_WEBHOOK
+check "secrets: the key of the component" test "$(env_value RASGO_CORE_DEPLOY_TOKEN)" = component-token
+check "secrets: the GitHub secret while it is not moved" test "$(env_value PLOI_DEPLOY_WEBHOOK)" = from-github
+check "secrets: a warning names what is still in GitHub" has "Aún no están en Bitwarden: PLOI_DEPLOY_WEBHOOK"
+check "secrets: the project id goes to bws" grep -Fq 'secret list p1 --output json' "$FAKE/bws.calls"
+
+setup
+core contract
+export GITHUB_ENV="$WORK/github_env" BWS_ACCESS_TOKEN=bootstrap
+unset BWS_PROJECT_ID PLOI_DEPLOY_WEBHOOK RASGO_CORE_DEPLOY_TOKEN
+fake_bws '[]'
+expect_fail "secrets: missing in Bitwarden and in GitHub" "Faltan secretos en el entorno staging: RASGO_CORE_DEPLOY_TOKEN" secrets RASGO_CORE_DEPLOY_TOKEN
+touch "$FAKE/bws.down"
+expect_fail "secrets: Bitwarden down stops the deploy" "no responde" secrets RASGO_CORE_DEPLOY_TOKEN
+
+setup
+export GITHUB_ENV="$WORK/github_env" PLOI_DEPLOY_WEBHOOK=x RASGO_CORE_DEPLOY_TOKEN=y
+unset BWS_ACCESS_TOKEN BWS_PROJECT_ID
+fake_bws '[]'
+expect_ok "secrets: without a token, the GitHub secrets as before" secrets RASGO_CORE_DEPLOY_TOKEN PLOI_DEPLOY_WEBHOOK
+check "secrets: without a token bws is not called" test ! -f "$FAKE/bws.calls"
+check "secrets: without a token there is no warning" test "$(grep -c '::warning::' "$OUT")" = 0
+check "secrets: the values reach the next steps" test "$(env_value RASGO_CORE_DEPLOY_TOKEN)" = y
+unset PLOI_DEPLOY_WEBHOOK RASGO_CORE_DEPLOY_TOKEN GITHUB_ENV
+
 # --- branch-head ------------------------------------------------------------------------------------------------
 
 setup
