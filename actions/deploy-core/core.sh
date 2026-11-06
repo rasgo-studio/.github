@@ -2,7 +2,7 @@
 # Steps shared by the reusable deploy workflows of rasgo-studio (RINF-54, WFA-01.1, D-104).
 #
 #   core.sh require NAME...    the named environment variables (the secrets the adapter reads) are set
-#   core.sh secrets NAME...    the same, read from Bitwarden Secrets Manager when BWS_ACCESS_TOKEN is set (D-109)
+#   core.sh secrets NAME...    the same, read from Bitwarden Secrets Manager with BWS_ACCESS_TOKEN (D-109)
 #   core.sh contract           reads rasgo.deploy.yml, checks it against this run and saves the deploy state
 #   core.sh branch-head        the branch the Ploi site pulls is still at the commit of this run
 #   core.sh version-file [DIR] writes DIR (or OUTPUT_DIR)/version.json with component, version and commit
@@ -133,47 +133,41 @@ export_secret() {
   if [ -n "${GITHUB_ENV:-}" ]; then printf '%s<<%s\n%s\n%s\n' "$name" "$delimiter" "$value" "$delimiter" >> "$GITHUB_ENV"; fi
 }
 
-# Each NAME from Bitwarden Secrets Manager (the machine account of BWS_ACCESS_TOKEN, EU region), or else from the
-# GitHub secret of the same name while it has not been moved (RINF-55): the run says which, never the value.
+# Each NAME from Bitwarden Secrets Manager only (the machine account of BWS_ACCESS_TOKEN, EU region, D-109): the first
+# key of bws_keys that exists wins. A key that is empty or still says PLACEHOLDER is not deployed, and no GitHub secret
+# takes its place. The run names the keys, never the values.
 cmd_secrets() {
-  local name list key value missing="" from_bws="" from_github=""
-  if [ -n "${BWS_ACCESS_TOKEN:-}" ]; then
-    ensure_bws
-    list="$(mktemp)"
-    chmod 600 "$list"
-    if [ -n "${BWS_PROJECT_ID:-}" ]; then
-      BWS_SERVER_URL="${BWS_SERVER_URL:-https://vault.bitwarden.eu}" bws secret list "$BWS_PROJECT_ID" --output json > "$list" 2> /dev/null ||
-        { rm -f "$list"; fail "Bitwarden Secrets Manager no responde con el token de este entorno; no se despliega."; }
-    else
-      BWS_SERVER_URL="${BWS_SERVER_URL:-https://vault.bitwarden.eu}" bws secret list --output json > "$list" 2> /dev/null ||
-        { rm -f "$list"; fail "Bitwarden Secrets Manager no responde con el token de este entorno; no se despliega."; }
-    fi
+  local name list key value found missing="" placeholder="" from_bws=""
+  [ -n "${BWS_ACCESS_TOKEN:-}" ] ||
+    fail "Falta BWS_ACCESS_TOKEN en el entorno ${DEPLOY_ENVIRONMENT:-} del repositorio: es el único secret que va en GitHub; el resto está en Bitwarden Secrets Manager (D-109)."
+  ensure_bws
+  list="$(mktemp)"
+  chmod 600 "$list"
+  if [ -n "${BWS_PROJECT_ID:-}" ]; then
+    BWS_SERVER_URL="${BWS_SERVER_URL:-https://vault.bitwarden.eu}" bws secret list "$BWS_PROJECT_ID" --output json > "$list" 2> /dev/null ||
+      { rm -f "$list"; fail "Bitwarden Secrets Manager no responde con el token de este entorno; no se despliega."; }
+  else
+    BWS_SERVER_URL="${BWS_SERVER_URL:-https://vault.bitwarden.eu}" bws secret list --output json > "$list" 2> /dev/null ||
+      { rm -f "$list"; fail "Bitwarden Secrets Manager no responde con el token de este entorno; no se despliega."; }
   fi
   for name in "$@"; do
-    value=""
-    if [ -n "${list:-}" ]; then
-      while IFS= read -r key; do
-        if jq -e --arg k "$key" 'any(.[]; .key == $k)' "$list" > /dev/null; then
-          value="$(jq -r --arg k "$key" '[.[] | select(.key == $k)][0].value' "$list")"
-          from_bws="$from_bws $key"
-          break
-        fi
-      done < <(bws_keys "$name")
-    fi
-    if [ -z "$value" ] && [ -n "${!name:-}" ]; then
-      value="${!name}"
-      from_github="$from_github $name"
-    fi
-    if [ -z "$value" ]; then missing="$missing $name"; continue; fi
+    value="" found=""
+    while IFS= read -r key; do
+      if jq -e --arg k "$key" 'any(.[]; .key == $k)' "$list" > /dev/null; then
+        value="$(jq -r --arg k "$key" '[.[] | select(.key == $k)][0].value' "$list")"
+        found="$key"
+        break
+      fi
+    done < <(bws_keys "$name")
+    if [ -z "$found" ]; then missing="$missing $name"; continue; fi
+    if [ -z "$value" ] || [[ "$value" =~ ^[[:space:]]*PLACEHOLDER([^A-Za-z0-9_]|$) ]]; then placeholder="$placeholder $found"; continue; fi
+    from_bws="$from_bws $found"
     export_secret "$name" "$value"
   done
-  if [ -n "${list:-}" ]; then rm -f "$list"; fi
-  [ -z "$missing" ] || fail "Faltan secretos en el entorno ${DEPLOY_ENVIRONMENT:-}:$missing. Van en Bitwarden Secrets Manager, proyecto actions, con el nombre que lista rasgo.deploy.yml (D-109)."
+  rm -f "$list"
   if [ -n "$from_bws" ]; then note "Desde Bitwarden:$from_bws"; fi
-  if [ -n "$from_github" ]; then
-    note "Desde los secrets de GitHub:$from_github"
-    if [ -n "${BWS_ACCESS_TOKEN:-}" ]; then printf '::warning::Aún no están en Bitwarden:%s (RINF-55).\n' "$from_github"; fi
-  fi
+  [ -z "$placeholder" ] || fail "Siguen en PLACEHOLDER o vacíos en Bitwarden:$placeholder. Pon el valor en el proyecto de este entorno (D-109); no se despliega."
+  [ -z "$missing" ] || fail "Faltan secretos en el entorno ${DEPLOY_ENVIRONMENT:-}:$missing. Van en Bitwarden Secrets Manager, proyecto actions, con el nombre que lista rasgo.deploy.yml (D-109)."
 }
 
 cmd_contract() {

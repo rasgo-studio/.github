@@ -243,18 +243,27 @@ export DEPLOY_ENVIRONMENT=staging GITHUB_ENV="$WORK/github_env" BWS_ACCESS_TOKEN
 export PLOI_DEPLOY_WEBHOOK=from-github
 unset RASGO_CORE_DEPLOY_TOKEN
 fake_bws '[{"key":"RASGO_CORE_DEPLOY_TOKEN__ACME_PORTAL","value":"component-token"}]'
-expect_ok "secrets: one in Bitwarden, one still in GitHub" secrets RASGO_CORE_DEPLOY_TOKEN PLOI_DEPLOY_WEBHOOK
+expect_fail "secrets: a GitHub secret never takes the place of Bitwarden" "Faltan secretos en el entorno staging: PLOI_DEPLOY_WEBHOOK" secrets RASGO_CORE_DEPLOY_TOKEN PLOI_DEPLOY_WEBHOOK
 check "secrets: the key of the component" test "$(env_value RASGO_CORE_DEPLOY_TOKEN)" = component-token
-check "secrets: the GitHub secret while it is not moved" test "$(env_value PLOI_DEPLOY_WEBHOOK)" = from-github
-check "secrets: a warning names what is still in GitHub" has "Aún no están en Bitwarden: PLOI_DEPLOY_WEBHOOK"
+check "secrets: the GitHub value is not left for the next steps" test -z "$(env_value PLOI_DEPLOY_WEBHOOK)"
 check "secrets: the project id goes to bws" grep -Fq 'secret list p1 --output json' "$FAKE/bws.calls"
+
+setup
+core contract
+export DEPLOY_ENVIRONMENT=production GITHUB_ENV="$WORK/github_env" BWS_ACCESS_TOKEN=bootstrap
+unset BWS_PROJECT_ID PLOI_DEPLOY_WEBHOOK RASGO_CORE_DEPLOY_TOKEN
+fake_bws '[{"key":"RASGO_CORE_DEPLOY_TOKEN","value":"PLACEHOLDER · Core › rasgo:token"},{"key":"PLOI_DEPLOY_WEBHOOK__ACME_PORTAL__PRODUCTION","value":""},{"key":"PLOI_DEPLOY_WEBHOOK","value":"generic"}]'
+expect_fail "secrets: a PLACEHOLDER or empty key stops the deploy" "Siguen en PLACEHOLDER o vacíos en Bitwarden: RASGO_CORE_DEPLOY_TOKEN PLOI_DEPLOY_WEBHOOK__ACME_PORTAL__PRODUCTION" secrets RASGO_CORE_DEPLOY_TOKEN PLOI_DEPLOY_WEBHOOK
+check "secrets: a PLACEHOLDER is never left for the next steps" test -z "$(env_value RASGO_CORE_DEPLOY_TOKEN)"
+check "secrets: an empty specific key does not fall back to the generic one" test -z "$(env_value PLOI_DEPLOY_WEBHOOK)"
+check "secrets: the placeholder text is not printed" test "$(grep -c 'rasgo:token' "$OUT")" = 0
 
 setup
 core contract
 export GITHUB_ENV="$WORK/github_env" BWS_ACCESS_TOKEN=bootstrap
 unset BWS_PROJECT_ID PLOI_DEPLOY_WEBHOOK RASGO_CORE_DEPLOY_TOKEN
 fake_bws '[]'
-expect_fail "secrets: missing in Bitwarden and in GitHub" "Faltan secretos en el entorno staging: RASGO_CORE_DEPLOY_TOKEN" secrets RASGO_CORE_DEPLOY_TOKEN
+expect_fail "secrets: missing in Bitwarden" "Faltan secretos en el entorno staging: RASGO_CORE_DEPLOY_TOKEN" secrets RASGO_CORE_DEPLOY_TOKEN
 touch "$FAKE/bws.down"
 expect_fail "secrets: Bitwarden down stops the deploy" "no responde" secrets RASGO_CORE_DEPLOY_TOKEN
 
@@ -262,10 +271,9 @@ setup
 export GITHUB_ENV="$WORK/github_env" PLOI_DEPLOY_WEBHOOK=x RASGO_CORE_DEPLOY_TOKEN=y
 unset BWS_ACCESS_TOKEN BWS_PROJECT_ID
 fake_bws '[]'
-expect_ok "secrets: without a token, the GitHub secrets as before" secrets RASGO_CORE_DEPLOY_TOKEN PLOI_DEPLOY_WEBHOOK
+expect_fail "secrets: without BWS_ACCESS_TOKEN the deploy stops" "Falta BWS_ACCESS_TOKEN" secrets RASGO_CORE_DEPLOY_TOKEN PLOI_DEPLOY_WEBHOOK
 check "secrets: without a token bws is not called" test ! -f "$FAKE/bws.calls"
-check "secrets: without a token there is no warning" test "$(grep -c '::warning::' "$OUT")" = 0
-check "secrets: the values reach the next steps" test "$(env_value RASGO_CORE_DEPLOY_TOKEN)" = y
+check "secrets: without a token the GitHub values are not used" test -z "$(env_value RASGO_CORE_DEPLOY_TOKEN)"
 unset PLOI_DEPLOY_WEBHOOK RASGO_CORE_DEPLOY_TOKEN GITHUB_ENV
 
 # --- branch-head ------------------------------------------------------------------------------------------------
