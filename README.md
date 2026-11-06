@@ -116,8 +116,7 @@ Every deploy follows the same order, and stops at the first step that fails:
 1. **Contract.** Reads `rasgo.deploy.yml` and checks it against the run: the adapter is the one of the workflow, the
    environment exists, production has `approval: core`, an environment with `approval: core` got an `approval_id`,
    and the run comes from what the environment deploys (its branch, or a tag when `ref: tag`).
-2. **Secrets.** The secrets the adapter reads come from Bitwarden Secrets Manager or, while they have not moved, from
-   the environment of the calling repository (see Secrets below). In `deploy-static.yml` this step runs after the build.
+2. **Secrets.** The secrets the adapter reads come from Bitwarden Secrets Manager only (see Secrets below). In `deploy-static.yml` this step runs after the build.
 3. **deploy-start.** Asks RASGO Core with the repository, app, environment, commit and `approval_id`. Core answers with
    a `deployment_id`, or with 403 and the reason (`pending`, `expired`, `used`, `mismatch`…), and then nothing touches
    the server (WFA-01.1, D-104). If Core does not answer, nothing deploys: there is no emergency exit.
@@ -149,9 +148,9 @@ Calling them:
     environment go in capitals, with anything else as `_`: the production webhook of `acme-portal` is
     `PLOI_DEPLOY_WEBHOOK__ACME_PORTAL__PRODUCTION`; a token shared by all, such as `RASGO_CORE_DEPLOY_TOKEN`, keeps
     its plain name.
-  - **While they move (RINF-55).** A name not found in Bitwarden is taken from the GitHub secret of the same name, and
-    the run warns with its name. Without `BWS_ACCESS_TOKEN` everything comes from GitHub, as before. A name in
-    neither place stops the deploy.
+  - **Only Bitwarden.** No GitHub secret takes the place of a name: a name not found in Bitwarden, or whose first key
+    found is empty or still says `PLACEHOLDER`, stops the deploy and the run names its key. Without `BWS_ACCESS_TOKEN`
+    the deploy stops too.
   - **How.** `bws` (bitwarden/sdk-sm 2.1.0, checked against the sha256 pinned in `core.sh`, the same as rasgo-motor) reads the project with the
     machine account. Each value is masked and left for the next steps of the job, and the run names the keys it
     used, never a value. If Bitwarden does not answer, nothing deploys. Optional repository variables:
