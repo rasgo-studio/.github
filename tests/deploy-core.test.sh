@@ -80,7 +80,7 @@ environments:
   production:
     ref: tag
     url: https://example.com/
-    approval: core
+    approval: merge
     secrets: [PLOI_DEPLOY_WEBHOOK]
 migrations: php artisan migrate --force
 health:
@@ -88,7 +88,8 @@ health:
   timeout_s: 5
 rollback: previous-tag
 EOF
-  unset APPROVAL_ID ROLLBACK_OF TASK RUN_ID APP VERSION VERSIONS PLOI_BRANCH CORE_TOKEN OUTPUT_DIR CONTRACT_FILE
+  unset APPROVAL_ID ROLLBACK_OF TASK RUN_ID APP VERSION VERSIONS PLOI_BRANCH CORE_TOKEN OUTPUT_DIR CONTRACT_FILE DEPLOYER
+  export GITHUB_ACTOR=sergio-cortinas GITHUB_TRIGGERING_ACTOR=sergio-cortinas
   export FAKE_DIR="$FAKE" PATH="$FAKE/bin:$PATH" RASGO_STATE="$WORK/state.json" HEALTH_INTERVAL=0
   export GITHUB_SHA="$SHA" GITHUB_REPOSITORY="rasgo-studio/acme-portal" GITHUB_SERVER_URL="https://github.com"
   export GITHUB_RUN_ID=42 GITHUB_REF_TYPE=branch GITHUB_REF_NAME=main GITHUB_STEP_SUMMARY="$WORK/summary"
@@ -140,16 +141,19 @@ check "contract: app defaults to the component" test "$(state app)" = acme-porta
 
 setup
 export DEPLOY_ENVIRONMENT=production GITHUB_REF_TYPE=tag GITHUB_REF_NAME=acme-v1.4.0
-expect_fail "contract: production needs an approval_id" "Falta approval_id" contract
-check "contract: the message cites WFA-01.1" has "WFA-01.1"
+unset GITHUB_ACTOR GITHUB_TRIGGERING_ACTOR
+expect_fail "contract: production needs the person who launched the run" "solo despliega con el merge de Sergio" contract
+check "contract: the message cites D-111" has "D-111"
 
 setup
-export DEPLOY_ENVIRONMENT=production APPROVAL_ID=01JAPPROVAL
+export DEPLOY_ENVIRONMENT=production
 expect_fail "contract: production deploys a tag, not a branch" "etiqueta publicada" contract
 
 setup
-export DEPLOY_ENVIRONMENT=production APPROVAL_ID=01JAPPROVAL GITHUB_REF_TYPE=tag GITHUB_REF_NAME=acme-v1.4.0
-expect_ok "contract: production on a tag with an approval" contract
+export DEPLOY_ENVIRONMENT=production GITHUB_REF_TYPE=tag GITHUB_REF_NAME=acme-v1.4.0 GITHUB_ACTOR=release-bot
+expect_ok "contract: production on a tag, merged by a person, needs no approval_id" contract
+check "contract: the person is the one who launched the run" test "$(state deployed_by)" = sergio-cortinas
+check "contract: approval is merge" test "$(state approval)" = merge
 check "contract: version is the number of the tag" test "$(state version)" = "1.4.0"
 check "contract: a tag deploy follows the Ploi branch (main)" test "$(state branch)" = main
 check "contract: the trailing slash of the url goes" test "$(state url)" = "https://example.com"
@@ -160,9 +164,25 @@ expect_ok "contract: a rollback goes on without approval_id (Core decides)" cont
 check "contract: PLOI_BRANCH for a tag" test "$(state branch)" = release
 
 setup
-sed -i 's/approval: core/approval: none/' rasgo.deploy.yml
-export DEPLOY_ENVIRONMENT=production APPROVAL_ID=01JAPPROVAL GITHUB_REF_TYPE=tag GITHUB_REF_NAME=v1.4.0
-expect_fail "contract: production without approval core is refused" "Producción solo despliega" contract
+export DEPLOY_ENVIRONMENT=production DEPLOYER=other-person GITHUB_REF_TYPE=tag GITHUB_REF_NAME=v1.4.0
+expect_ok "contract: DEPLOYER names the person when it is set" contract
+check "contract: DEPLOYER wins" test "$(state deployed_by)" = other-person
+
+setup
+sed -i 's/approval: merge/approval: core/' rasgo.deploy.yml
+export DEPLOY_ENVIRONMENT=production GITHUB_REF_TYPE=tag GITHUB_REF_NAME=v1.4.0
+expect_ok "contract: approval core, the name before D-111, reads as merge" contract
+check "contract: core is recorded as merge" test "$(state approval)" = merge
+
+setup
+sed -i 's/approval: merge/approval: none/' rasgo.deploy.yml
+export DEPLOY_ENVIRONMENT=production GITHUB_REF_TYPE=tag GITHUB_REF_NAME=v1.4.0
+expect_fail "contract: production without approval merge is refused" "Producción solo despliega con el merge de Sergio" contract
+
+setup
+sed -i 's/approval: merge/approval: hub/' rasgo.deploy.yml
+export DEPLOY_ENVIRONMENT=production GITHUB_REF_TYPE=tag GITHUB_REF_NAME=v1.4.0
+expect_fail "contract: an unknown approval is refused" "approval «hub» desconocida" contract
 
 setup
 export DEPLOY_ADAPTERS=static
@@ -283,40 +303,45 @@ core contract
 printf '%s' "$SHA" > "$FAKE/head"
 expect_ok "branch-head: the branch is at the commit of the run" branch-head
 printf '%s' "fedcba9876543210fedcba9876543210fedcba98" > "$FAKE/head"
-expect_fail "branch-head: a branch that moved stops the deploy" "no recibiría el commit aprobado" branch-head
+expect_fail "branch-head: a branch that moved stops the deploy" "no recibiría el commit de esta ejecución" branch-head
 
 # --- start ------------------------------------------------------------------------------------------------------
 
 setup
-export DEPLOY_ENVIRONMENT=production APPROVAL_ID=01JAPPROVAL TASK=ACME01WEB-23 GITHUB_REF_TYPE=tag GITHUB_REF_NAME=v1.4.0
+export DEPLOY_ENVIRONMENT=production TASK=ACME01WEB-23 GITHUB_REF_TYPE=tag GITHUB_REF_NAME=v1.4.0
 core contract
 export CORE_TOKEN=token-secret-value
 answer start 201 '{"deployment_id":"01JDEPLOY"}'
-expect_ok "start: Core confirms the approval" start
+expect_ok "start: Core accepts the person who deploys" start
 check "start: the deployment_id is saved" test "$(state deployment_id)" = 01JDEPLOY
 check "start: calls deploy-start on Core" grep -Fxq "https://core.test/api/v1/deploy-start" "$FAKE/urls"
-check "start: the body carries the approval tuple" test "$(jq -r '[.repository, .app, .environment, .commit_sha, .approval_id, .task] | join(" ")' "$FAKE/request.start.json")" = "rasgo-studio/acme-portal acme-portal production $SHA 01JAPPROVAL ACME01WEB-23"
+check "start: the body carries what deploys and who" test "$(jq -r '[.repository, .app, .environment, .commit_sha, .deployed_by, .task] | join(" ")' "$FAKE/request.start.json")" = "rasgo-studio/acme-portal acme-portal production $SHA sergio-cortinas ACME01WEB-23"
+check "start: no approval_id when there is none" test "$(jq 'has("approval_id")' "$FAKE/request.start.json")" = false
 check "start: the body carries the run url" test "$(jq -r .run_url "$FAKE/request.start.json")" = "https://github.com/rasgo-studio/acme-portal/actions/runs/42"
 check "start: no rollback_of when there is none" test "$(jq 'has("rollback_of")' "$FAKE/request.start.json")" = false
 # Core answers 422 when any key of the contract looks like a secret (DeployContractCheck of rasgo-core, PLN-11).
 check "start: the contract goes without keys that look like secrets" test "$(jq '[.contract | paths | .[] | strings | select(test("secret|token|password|passwd|private[_-]?key|api[_-]?key|credential"; "i"))] | length' "$FAKE/request.start.json")" = 0
-check "start: the contract keeps the rest" test "$(jq -r '.contract.environments.production.approval' "$FAKE/request.start.json")" = core
+check "start: the contract keeps the rest" test "$(jq -r '.contract.environments.production.approval' "$FAKE/request.start.json")" = merge
 check "start: the token goes in a header" grep -Fq "Authorization: Bearer token-secret-value" "$FAKE/headers"
 check "start: the token is not on the command line" test "$(grep -c token-secret-value "$FAKE/args")" = 0
 
 setup
+export DEPLOY_ENVIRONMENT=production GITHUB_REF_TYPE=tag GITHUB_REF_NAME=v1.4.0 GITHUB_TRIGGERING_ACTOR=someone-else
 core contract
 export CORE_TOKEN=t
-answer start 403 '{"error":"Approval already used","reason":"used","rule":"WFA-01.1"}'
-expect_fail "start: a used approval stops the deploy" "ya se usó" start
-check "start: the rule is shown" has "(WFA-01.1)"
+answer start 403 '{"error":"Only Sergio deploys to production.","reason":"not_allowed","rule":"D-111"}'
+expect_fail "start: Core refuses anyone but Sergio" "solo despliega a producción el merge o la ejecución de Sergio" start
+check "start: the rule is shown" has "(D-111)"
 check "start: no deployment_id after a 403" test -z "$(state deployment_id)"
 
+# The Core before RCOR-87 still asks for approval_id: the input goes through while that Core is live.
 setup
+export DEPLOY_ENVIRONMENT=production APPROVAL_ID=01JAPPROVAL GITHUB_REF_TYPE=tag GITHUB_REF_NAME=v1.4.0
 core contract
 export CORE_TOKEN=t
-answer start 403 '{"reason":"mismatch","rule":"WFA-01.1"}'
-expect_fail "start: an approval for another commit stops the deploy" "otro repositorio, app, entorno o commit" start
+answer start 403 '{"reason":"used","rule":"WFA-01.1"}'
+expect_fail "start: the Core before RCOR-87 still explains its approval" "ya se usó" start
+check "start: approval_id goes to that Core" test "$(jq -r .approval_id "$FAKE/request.start.json")" = 01JAPPROVAL
 
 setup
 core contract

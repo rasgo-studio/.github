@@ -1,6 +1,7 @@
-# Reusable RASGO deploy, Laravel on Ploi (RINF-54, WFA-01.1, D-104): reads rasgo.deploy.yml, asks RASGO Core with
+# Reusable RASGO deploy, Laravel on Ploi (RINF-54, DEV-12, D-111): reads rasgo.deploy.yml, asks RASGO Core with
 # deploy-start, calls the Ploi deploy webhook of the site, waits until /version answers with this commit and closes
-# the deploy in Core with deploy-finish. Production only deploys with an approval_id that Core confirms.
+# the deploy in Core with deploy-finish. Production deploys with Sergio's merge into main, which Core checks in
+# deploy-start (D-111).
 # Also deploys rasgo-core (adapter monorepo-ploi): one Ploi site per environment.
 # Usage in each repository (.github/workflows/deploy.yml), with BWS_ACCESS_TOKEN (and the variable BWS_PROJECT_ID) in its
 # staging and production environments:
@@ -9,10 +10,10 @@
 #   on:
 #     push:
 #       branches: [main]
+#       tags: ['v*']
 #     workflow_dispatch:
 #       inputs:
 #         environment: { type: choice, options: [production, staging], default: production }
-#         approval_id: { type: string, required: false }
 #         rollback_of: { type: string, required: false }
 #         task: { type: string, required: false }
 #         run_id: { type: string, required: false }
@@ -20,8 +21,7 @@
 #     deploy:
 #       uses: rasgo-studio/.github/.github/workflows/deploy-laravel.yml@main
 #       with:
-#         environment: ${{ inputs.environment || 'staging' }}
-#         approval_id: ${{ inputs.approval_id }}
+#         environment: ${{ inputs.environment || (github.ref_type == 'tag' && 'production') || 'staging' }}
 #         rollback_of: ${{ inputs.rollback_of }}
 #         task: ${{ inputs.task }}
 #         run_id: ${{ inputs.run_id }}
@@ -37,11 +37,11 @@ on:
         type: string
         required: true
       approval_id:
-        description: Approval of Core for this commit (production, and any environment with approval core)
+        description: Only for a Core older than RCOR-87, which still asks for an approval; goes once that Core is no longer live
         type: string
         default: ""
       rollback_of:
-        description: deployment_id of the failed deploy that this one undoes (Core allows it without a new approval)
+        description: deployment_id of the failed deploy that this one undoes; Core closes it as rolled_back
         type: string
         default: ""
       task:
@@ -86,6 +86,7 @@ jobs:
       cancel-in-progress: false
     env:
       DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
+      DEPLOYER: ${{ github.triggering_actor }}
       DEPLOY_ADAPTERS: laravel-ploi monorepo-ploi
       APPROVAL_ID: ${{ inputs.approval_id }}
       ROLLBACK_OF: ${{ inputs.rollback_of }}
@@ -116,12 +117,12 @@ jobs:
         with:
           command: secrets
           args: RASGO_CORE_DEPLOY_TOKEN PLOI_DEPLOY_WEBHOOK
-      # Ploi pulls the head of its branch, not a commit: only that head can be the approved commit.
+      # Ploi pulls the head of its branch, not a commit: only that head can be the commit of this run.
       - name: Branch the server pulls
         uses: rasgo-studio/.github/actions/deploy-core@main
         with:
           command: branch-head
-      - name: Start (Core checks the approval)
+      - name: Start (Core checks who deploys)
         uses: rasgo-studio/.github/actions/deploy-core@main
         env:
           CORE_TOKEN: ${{ env.RASGO_CORE_DEPLOY_TOKEN }}

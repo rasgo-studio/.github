@@ -1,16 +1,18 @@
 #!/usr/bin/env bash
-# Steps shared by the reusable deploy workflows of rasgo-studio (RINF-54, WFA-01.1, D-104).
+# Steps shared by the reusable deploy workflows of rasgo-studio (RINF-54, RINF-91, DEV-12, D-111).
 #
 #   core.sh require NAME...    the named environment variables (the secrets the adapter reads) are set
 #   core.sh secrets NAME...    the same, read from Bitwarden Secrets Manager with BWS_ACCESS_TOKEN (D-109)
 #   core.sh contract           reads rasgo.deploy.yml, checks it against this run and saves the deploy state
 #   core.sh branch-head        the branch the Ploi site pulls is still at the commit of this run
 #   core.sh version-file [DIR] writes DIR (or OUTPUT_DIR)/version.json with component, version and commit
-#   core.sh start              deploy-start in RASGO Core: it only goes on with an approval Core confirms
+#   core.sh start              deploy-start in RASGO Core: production only goes on when Core accepts who deploys
 #   core.sh health             waits until the environment answers with this commit or version
 #   core.sh finish             deploy-finish in RASGO Core with the result
 #
 # Core is the barrier: without an answer from Core nothing deploys, and there is no emergency exit (RINF-54).
+# Production deploys with Sergio's merge, which is the approval (D-111): deploy-start carries the GitHub person who
+# merged or launched the run (DEPLOYER, else GITHUB_TRIGGERING_ACTOR, else GITHUB_ACTOR) and Core refuses anyone else.
 # The state of one deploy lives in a JSON file between steps; it holds names and ids, never a secret.
 # With RUN_ID (the input run_id), deploy-start and deploy-finish carry X-Rasgo-Run, so Core ties the deploy to the run
 # that asked for it (RCOR-45, deployments.run_id). Without it, both requests are the same as before (RINF-71).
@@ -172,7 +174,7 @@ cmd_secrets() {
 
 cmd_contract() {
   local file="${CONTRACT_FILE:-rasgo.deploy.yml}" env="${DEPLOY_ENVIRONMENT:-}" json
-  local adapter component ref url approval path expect timeout version app branch public tag run_id
+  local adapter component ref url approval path expect timeout version app branch public tag run_id deployer
 
   case "$env" in
     staging | production) ;;
@@ -197,12 +199,21 @@ cmd_contract() {
   [ -n "$ref" ] && [ -n "$url" ] || fail "Al entorno $env le falta ref o url."
   case "$url" in https://*) ;; *) fail "La url de $env no es https." ;; esac
 
-  # Production always deploys with an approval of Core (WFA-01.1, level 3), whatever the contract says.
-  if [ "$env" = production ] && [ "$approval" != core ]; then
-    fail "Producción solo despliega con aprobación de Core (approval: core, WFA-01.1); el contrato dice «$approval»."
+  # Production deploys with Sergio's merge (approval: merge, D-111). «core» is the name it had before D-111: it still
+  # reads as merge until rasgo-wp-base and the sites made from it change their contract.
+  case "$approval" in
+    merge | none) ;;
+    core) approval=merge ;;
+    *) fail "approval «$approval» desconocida: el contrato v1 tiene merge o none." ;;
+  esac
+  if [ "$env" = production ] && [ "$approval" != merge ]; then
+    fail "Producción solo despliega con el merge de Sergio (approval: merge, D-111); el contrato dice «$approval»."
   fi
-  if [ "$approval" = core ] && [ -z "${APPROVAL_ID:-}" ] && [ -z "${ROLLBACK_OF:-}" ]; then
-    fail "Falta approval_id: $env solo despliega con una aprobación de Core para este commit (WFA-01.1). Pídela con approval.request y lanza el workflow con ella."
+
+  # Who merged or launched this run. Core checks it in deploy-start; without it production does not deploy.
+  deployer="${DEPLOYER:-${GITHUB_TRIGGERING_ACTOR:-${GITHUB_ACTOR:-}}}"
+  if [ "$approval" = merge ] && [ -z "$deployer" ]; then
+    fail "No sé qué persona de GitHub lanzó esta ejecución: $env solo despliega con el merge de Sergio (D-111)."
   fi
 
   # What runs is what the contract says deploys: the published tag, or that branch.
@@ -244,13 +255,14 @@ cmd_contract() {
     --arg ref "$ref" --arg tag "$tag" --arg branch "$branch" --arg url "${url%/}" --arg approval "$approval" \
     --arg health_path "$path" --arg health_expect "$expect" --arg health_timeout "$timeout" \
     --arg version "$version" --arg commit "${GITHUB_SHA:?}" --arg approval_id "${APPROVAL_ID:-}" \
-    --arg rollback_of "${ROLLBACK_OF:-}" --arg task "${TASK:-}" --arg run_id "$run_id" --argjson contract "$public" \
+    --arg rollback_of "${ROLLBACK_OF:-}" --arg task "${TASK:-}" --arg run_id "$run_id" --arg deployed_by "$deployer" \
+    --argjson contract "$public" \
     '{component: $component, app: $app, adapter: $adapter, environment: $environment, ref: $ref, tag: $tag,
       branch: $branch, url: $url, approval: $approval, health_path: $health_path, health_expect: $health_expect,
       health_timeout: $health_timeout, version: $version, commit: $commit, approval_id: $approval_id,
-      rollback_of: $rollback_of, task: $task, run_id: $run_id, contract: $contract}' > "$STATE"
+      rollback_of: $rollback_of, task: $task, run_id: $run_id, deployed_by: $deployed_by, contract: $contract}' > "$STATE"
 
-  note "Contrato correcto: $component ($adapter) a $env, $url, versión $version, commit $(short "$GITHUB_SHA"), aprobación: $approval."
+  note "Contrato correcto: $component ($adapter) a $env, $url, versión $version, commit $(short "$GITHUB_SHA"), aprobación: $approval${deployer:+, lo despliega $deployer}."
   if [ -n "$run_id" ]; then note "El despliegue queda unido al run $run_id de Core (X-Rasgo-Run)."; fi
   summary "- Contrato: $component ($adapter) a $env, versión $version, commit $(short "$GITHUB_SHA")."
 }
@@ -262,7 +274,7 @@ cmd_branch_head() {
   head="$(git ls-remote --exit-code origin "refs/heads/$branch" | cut -f1)" \
     || fail "No encuentro la rama $branch en el repositorio."
   [ "$head" = "$GITHUB_SHA" ] \
-    || fail "Ploi despliega la cabeza de $branch ($(short "$head")) y esta ejecución es de $(short "$GITHUB_SHA"): el servidor no recibiría el commit aprobado. No se despliega."
+    || fail "Ploi despliega la cabeza de $branch ($(short "$head")) y esta ejecución es de $(short "$GITHUB_SHA"): el servidor no recibiría el commit de esta ejecución. No se despliega."
   note "La rama $branch está en $(short "$head"), el commit de esta ejecución."
 }
 
@@ -278,8 +290,11 @@ cmd_version_file() {
   note "Escrito $dir/version.json con la versión $(state_get version)."
 }
 
+# Why Core refuses. not_allowed is the answer since D-111; the others are the approval of Core before RCOR-87, which
+# reads approval_id, and go with the input approval_id once that Core is no longer live.
 reason_text() {
   case "$1" in
+    not_allowed) printf 'solo despliega a producción el merge o la ejecución de Sergio' ;;
     missing) printf 'falta approval_id' ;;
     not_found) printf 'esa aprobación no existe' ;;
     pending) printf 'la aprobación sigue pendiente: apruébala en el Hub y vuelve a lanzarlo' ;;
@@ -301,6 +316,7 @@ cmd_start() {
   jq --arg repository "${GITHUB_REPOSITORY:?}" \
     --arg run_url "${GITHUB_SERVER_URL:-https://github.com}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID:-0}" \
     '{repository: $repository, app, environment, commit_sha: .commit, run_url: $run_url, contract}
+     + (if .deployed_by != "" then {deployed_by} else {} end)
      + (if .approval_id != "" then {approval_id} else {} end)
      + (if .rollback_of != "" then {rollback_of} else {} end)
      + (if .task != "" then {task} else {} end)' "$STATE" > "$request"
@@ -317,8 +333,8 @@ cmd_start() {
       ;;
     403)
       reason="$(jq -r '.reason // "desconocido"' "$response" 2> /dev/null || printf 'desconocido')"
-      rule="$(jq -r '.rule // "WFA-01.1"' "$response" 2> /dev/null || printf 'WFA-01.1')"
-      fail "Core no confirma la aprobación: $(reason_text "$reason") ($rule). No se toca el servidor."
+      rule="$(jq -r '.rule // "D-111"' "$response" 2> /dev/null || printf 'D-111')"
+      fail "Core no deja desplegar: $(reason_text "$reason") ($rule). No se toca el servidor."
       ;;
     401) fail "Core no acepta el token de despliegue (401): revisa RASGO_CORE_DEPLOY_TOKEN. No se despliega." ;;
     # 422: the request does not validate, such as a contract key that looks like a secret (PLN-11).
