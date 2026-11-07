@@ -8,7 +8,7 @@ deploy workflows (`.github/workflows/deploy-*.yml`), called from each repository
 ## Deploy contract: `rasgo.deploy.yml`
 
 Each repository that deploys keeps a `rasgo.deploy.yml` at its root: what it is, how it deploys and how a deploy
-is checked (RINF-54). The reusable deploy workflows read it, and RASGO Core shows it in each approval. Version 1
+is checked (RINF-54). The reusable deploy workflows read it, and RASGO Core keeps it with each deploy. Version 1
 keeps only what exists today: the adapters are the current ways of deploying, behind one contract. Its schema is
 `schemas/deploy-contract.json`.
 
@@ -18,16 +18,18 @@ keeps only what exists today: the adapters are the current ways of deploying, be
 | `component` | yes | Its name in the Registry of RASGO Core: the repository, or the site it publishes |
 | `stack` | yes | `laravel`, `wordpress`, `static`, `monorepo` or `n8n`, as the `stack` property of the repository (DEV-02.2) |
 | `adapter` | yes | `laravel-ploi` (Ploi deploy webhook), `wordpress` (Ploi deploy webhook too), `static` (Cloudflare Pages), `monorepo-ploi` (rasgo-core, one Ploi site per environment) or `n8n` (rasgo-motor) |
-| `environments` | yes | `staging` and `production`, each with `ref` (a branch, or `tag` for the published release), `url`, `approval` and `secrets` |
-| `migrations` | no | The command the deploy runs after the code; it is shown in the approval |
+| `environments` | yes | `staging` and `production`, each with `ref` (a branch, or `tag` for the published release), `url`, `approval` (`merge` or `none`) and `secrets` |
+| `migrations` | no | The command the deploy runs after the code; the record of the deploy in Core shows it |
 | `health` | yes | `path` on the environment `url` that answers with the deployed version (`expect: version`), or only its status |
-| `rollback` | yes | `previous-tag` (a deploy of the tag before: Core allows it without a new approval up to 24 hours after the failed deploy) or `none` (going back is not done by the system) |
+| `rollback` | yes | `previous-tag` (a deploy of the tag before, launched by Sergio, which Core closes as `rolled_back`) or `none` (going back is not done by the system) |
 
 Rules of the contract:
 
-- **Production always deploys with an approval of Core** (`approval: core`): the deploy workflow asks Core
-  (`deploy-start`) whether the `approval_id` exists, has not expired and is for the same commit, and stops
-  before touching the server if not (WFA-01.1, level 3; D-104). Staging may be automatic (`approval: none`, level 2).
+- **Production deploys with Sergio's merge, which is the approval** (`approval: merge`, D-111): the deploy workflow
+  sends Core (`deploy-start`) the GitHub person who merged or launched the run, and Core stops it before it touches
+  the server unless that person is Sergio (DEV-12). There is no approval in the Hub for a deploy. Staging may be
+  automatic (`approval: none`, level 2). `approval: core`, the name before D-111, still reads as `merge` until
+  rasgo-wp-base and the sites made from it change their contract.
 - **Names, never values** (DEV-07): `secrets` lists the names of the environment secrets the adapter reads, such as
   the Ploi deploy webhook. No host, path with a secret, token or key goes in the contract.
 - This repository is public (DEV-02.2): the examples here carry no client names; each repository writes its own.
@@ -48,7 +50,7 @@ environments:
   production:
     ref: tag
     url: https://example.com
-    approval: core
+    approval: merge
     secrets: [PLOI_DEPLOY_WEBHOOK]
 migrations: php artisan migrate --force
 health:
@@ -68,7 +70,7 @@ environments:
   production:
     ref: tag
     url: https://example.com
-    approval: core
+    approval: merge
     secrets: [PLOI_DEPLOY_WEBHOOK]
 health:
   path: /
@@ -93,7 +95,7 @@ environments:
   production:
     ref: tag
     url: https://example.org
-    approval: core
+    approval: merge
     secrets: [CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID]
 health:
   path: /version.json
@@ -114,12 +116,13 @@ the one of its `adapter` from its own `.github/workflows/deploy.yml`; the header
 Every deploy follows the same order, and stops at the first step that fails:
 
 1. **Contract.** Reads `rasgo.deploy.yml` and checks it against the run: the adapter is the one of the workflow, the
-   environment exists, production has `approval: core`, an environment with `approval: core` got an `approval_id`,
-   and the run comes from what the environment deploys (its branch, or a tag when `ref: tag`).
+   environment exists, production has `approval: merge` and a GitHub person who merged or launched the run, and the
+   run comes from what the environment deploys (its branch, or a tag when `ref: tag`).
 2. **Secrets.** The secrets the adapter reads come from Bitwarden Secrets Manager only (see Secrets below). In `deploy-static.yml` this step runs after the build.
-3. **deploy-start.** Asks RASGO Core with the repository, app, environment, commit and `approval_id`. Core answers with
-   a `deployment_id`, or with 403 and the reason (`pending`, `expired`, `used`, `mismatch`…), and then nothing touches
-   the server (WFA-01.1, D-104). If Core does not answer, nothing deploys: there is no emergency exit.
+3. **deploy-start.** Asks RASGO Core with the repository, app, environment, commit and the GitHub person
+   (`deployed_by`: `github.triggering_actor`). Core answers with a `deployment_id`, or with 403 and the reason
+   (`not_allowed` when that person is not Sergio), and then nothing touches the server (D-111, DEV-12). If Core does
+   not answer, nothing deploys: there is no emergency exit.
 4. **Deploy.** The adapter: the Ploi webhook, or the upload to Cloudflare Pages.
 5. **Health.** Asks `url` + `health.path` until it answers with this commit (full or short) or this version, up to
    `health.timeout_s`. A JSON answer with a `commit` field, such as a `version.json`, counts only by that commit: the
@@ -130,10 +133,10 @@ Every deploy follows the same order, and stops at the first step that fails:
 
 Calling them:
 
-- **Inputs.** `environment` (required), `approval_id`, `rollback_of` (the `deployment_id` of the failed deploy that
-  this one undoes) and `task` (the Plane code, so Core can report on it), plus `app`, `version` and, for a monorepo,
+- **Inputs.** `environment` (required), `rollback_of` (the `deployment_id` of the failed deploy that this one undoes) and `task` (the Plane code, so Core can report on it), plus `app`, `version` and, for a monorepo,
   `versions` (a JSON object with the version of each app). `deploy-static.yml` also takes `pages-project`,
-  `build-command`, `output-dir`, `production-branch` and `staging-branch`.
+  `build-command`, `output-dir`, `production-branch` and `staging-branch`. `approval_id` is only for a Core older
+  than RCOR-87, which still asks for an approval; it goes once that Core is no longer live.
 - **Tying a deploy to its run.** `deploy-laravel.yml` takes `run_id`, the number of the RASGO Core run the deploy
   belongs to. With it, deploy-start and deploy-finish carry the header `X-Rasgo-Run: <run_id>` and Core keeps the
   deploy in `deployments.run_id`, as an artifact of that run (RCOR-45). Only digits are accepted, and the Contract
@@ -157,14 +160,14 @@ Calling them:
     `BWS_PROJECT_ID` (read only that project) and `BWS_SERVER_URL` (another region).
   - **Calling.** With `secrets: inherit`, or passing `BWS_ACCESS_TOKEN` explicitly under `secrets:`.
 - The repository variable `RASGO_CORE_URL` points to another Core, for tests.
-- **Production** runs from `workflow_dispatch` once Sergio has approved it in the Hub, on the tag it deploys:
-  `gh workflow run deploy.yml --ref acme-v1.4.0 -f environment=production -f approval_id=<id>`. Each approval serves
-  one deploy of one commit and lasts 24 hours (spec 003 of rasgo-core). Staging with `approval: none` can deploy on
-  each push to its branch.
+- **Production** runs on Sergio's merge: the push to the branch the contract deploys, or the tag that the merge of
+  the version PR publishes (DEV-12 12.3). To relaunch or go back, Sergio runs `workflow_dispatch` on what he wants
+  live: `gh workflow run deploy.yml --ref acme-v1.4.0 -f environment=production`. Staging with `approval: none` can
+  deploy on each push to its branch.
 - **Ploi deploys the head of its branch**, not a given commit. So both Ploi workflows stop before deploy-start when
   that head (`ref`, or `ploi-branch` for a tag, `main` by default) is not the commit of the run: with release-please,
   deploy the tag right after merging the release. For the same reason a Ploi rollback to an older tag cannot pass;
-  going back there is a revert merged into the branch, deployed with a new approval, or the rollback of the Ploi panel
+  going back there is a revert merged into the branch, which deploys like any merge, or the rollback of the Ploi panel
   (Sergio); their contracts say `rollback: none`. `deploy-static.yml` builds the commit it runs on, so
   `rollback: previous-tag` works there.
 - **Static sites** get `version.json` (`component`, `version`, `commit`) in the published folder unless the build

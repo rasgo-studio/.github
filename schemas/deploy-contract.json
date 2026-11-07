@@ -31,7 +31,7 @@
       }
     },
     "migrations": {
-      "description": "Command the deploy runs after the code, or none. Shown in the approval.",
+      "description": "Command the deploy runs after the code, or none. The record of the deploy in Core shows it.",
       "type": "string"
     },
     "health": {
@@ -70,8 +70,8 @@
         },
         "url": { "type": "string", "pattern": "^https://" },
         "approval": {
-          "description": "core: only with an approval_id that Core confirms (level 3, WFA-01.1). none: automatic (level 2), staging only.",
-          "enum": ["core", "none"]
+          "description": "merge: deploys with Sergio's merge or run, which Core checks in deploy-start (D-111). none: automatic (level 2), staging only. core: the name of merge before D-111, read as merge until rasgo-wp-base and the sites made from it change their contract.",
+          "enum": ["merge", "none", "core"]
         },
         "secrets": {
           "description": "Names of the environment secrets the adapter reads (for example the Ploi deploy webhook). Never values.",
@@ -84,9 +84,9 @@
   },
   "allOf": [
     {
-      "description": "Production always deploys with an approval of Core.",
+      "description": "Production always deploys with Sergio's merge (D-111).",
       "if": { "required": ["environments"], "properties": { "environments": { "required": ["production"] } } },
-      "then": { "properties": { "environments": { "properties": { "production": { "required": ["approval"], "properties": { "approval": { "const": "core" } } } } } } }
+      "then": { "properties": { "environments": { "properties": { "production": { "required": ["approval"], "properties": { "approval": { "enum": ["merge", "core"] } } } } } } }
     }
   ]
 }
