@@ -1,4 +1,4 @@
-# Reusable RASGO CI, Laravel (DEV-02, D-086): task-code branch, then tests, lint and build once the app exists.
+# Reusable RASGO CI, Laravel (5-desarrollo/github.md of RASGO OS): task-code branch, then tests, lint and build once the app exists.
 # Usage in each repository (.github/workflows/ci.yml):
 #
 #   name: CI
@@ -31,8 +31,10 @@ jobs:
           BRANCH: ${{ github.head_ref }}
         run: |
           if printf '%s' "$BRANCH" | grep -Eq '^(dependabot/|release-please--)'; then exit 0; fi
+          # The simplification break opens no Plane tasks (Sergio, 8 Nov 2026): its one branch passes until the break ends.
+          if [ "$BRANCH" = "claude/project-thread-t5d88o" ]; then exit 0; fi
           if ! printf '%s' "$BRANCH" | grep -Eq '^[A-Z][A-Z0-9]*-[0-9]+-[A-Za-z0-9._-]+$'; then
-            echo "La rama $BRANCH no empieza por un identificador de Plane y un número (DEV-02)."
+            echo "La rama $BRANCH no empieza por el código de una tarea de Plane y un número (5-desarrollo/github.md)."
             exit 1
           fi
 
