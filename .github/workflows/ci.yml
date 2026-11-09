@@ -1,0 +1,26 @@
+# Checks of this repository: one job, ci. The branch of a task and that every shared workflow parses.
+name: CI
+
+on: [pull_request]
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Branch with task code
+        env:
+          BRANCH: ${{ github.head_ref }}
+        run: |
+          if printf '%s' "$BRANCH" | grep -Eq '^dependabot/'; then exit 0; fi
+          # The simplification break opens no Plane tasks (Sergio, 8 Nov 2026): its one branch passes until the break ends.
+          if [ "$BRANCH" = "claude/project-thread-t5d88o" ]; then exit 0; fi
+          printf '%s' "$BRANCH" | grep -Eq '^[A-Z][A-Z0-9]*-[0-9]+-[A-Za-z0-9._-]+$' || { echo "La rama $BRANCH no empieza por el código de una tarea de Plane y un número (5-desarrollo/github.md)."; exit 1; }
+      - uses: actions/checkout@v4
+      - name: Workflows parse
+        run: |
+          for file in .github/workflows/*.yml; do
+            yq -e '.jobs' "$file" > /dev/null || { echo "::error file=$file::no es un workflow válido"; exit 1; }
+          done

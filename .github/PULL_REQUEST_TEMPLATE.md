@@ -1,8 +1,8 @@
 ## Resumen
-<!-- Título del PR: el código de la tarea y qué hace, «ACME01WEB-23 Formulario de contacto» (DEV-02). -->
+<!-- Título del PR: el código de la tarea y qué hace, en castellano: «ACME01WEB-23 Formulario de contacto» (5-desarrollo/github.md de RASGO OS). -->
 
 ### Tarea
-<!-- Enlace a la tarea de Plane (ACME01WEB-23) y a su spec: light, en la historia, o full, en specs/NNN-nombre/ de este repositorio. -->
+<!-- Enlace a la tarea de Plane (ACME01WEB-23) y a su spec: ligera, en la tarea, o completa, en specs/ACME01WEB-23.md de esta PR (5-desarrollo/specs.md). -->
 - Plane:
 - Spec:
 
@@ -16,7 +16,7 @@
 1.
 
 ### Criterios de aceptación
-<!-- Casillas copiadas de la propiedad Acceptance criteria (Criterios de aceptación) del work item (D-082), con sus pasos de How to test (Cómo probarlo). Las marca quien ejecuta según avanza; quien revisa las comprueba al probar. -->
+<!-- Las casillas de los criterios de aceptación de la tarea, con sus pasos de Cómo probarlo. Las marca Sergio al probar. -->
 - [ ]
 
 ### Riesgos
