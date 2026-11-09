@@ -87,3 +87,17 @@ jobs:
           php artisan key:generate
       - name: Tests (Pest)
         run: php artisan test
+
+  # The one check the ruleset of main asks for in a repository that calls this workflow: "ci / ci" is green only when
+  # no job above failed or was cancelled (a skipped one is fine). 5-desarrollo/github.md of RASGO OS.
+  ci:
+    needs: [branch, app, laravel]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Every job passed or was skipped
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "Resultados: $RESULTS"
+          case " $RESULTS " in *" failure "*|*" cancelled "*) echo "Algún paso del CI ha fallado."; exit 1 ;; esac

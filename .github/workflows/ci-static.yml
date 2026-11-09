@@ -52,3 +52,17 @@ jobs:
         run: npm run build
       - name: Tests
         run: npm test --if-present
+
+  # The one check the ruleset of main asks for in a repository that calls this workflow: "ci / ci" is green only when
+  # no job above failed or was cancelled (a skipped one is fine). 5-desarrollo/github.md of RASGO OS.
+  ci:
+    needs: [branch, node]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Every job passed or was skipped
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "Resultados: $RESULTS"
+          case " $RESULTS " in *" failure "*|*" cancelled "*) echo "Algún paso del CI ha fallado."; exit 1 ;; esac

@@ -20,5 +20,6 @@ jobs:
     uses: rasgo-studio/.github/.github/workflows/ci-laravel.yml@main
 ```
 
-The branch check asks for the code of a Plane task and a number (`ACME01WEB-23-contact-form`), as
-`5-desarrollo/github.md` says. This repository is public: no client name, host or secret goes in it.
+Each shared workflow ends with a job `ci` that is green only when nothing above failed, so a calling repository
+reports one check, `ci / ci`: the one its ruleset asks for. The branch check asks for the code of a Plane task and a
+number (`ACME01WEB-23-contact-form`), as `5-desarrollo/github.md` says. This repository is public: no client name, host or secret goes in it.
