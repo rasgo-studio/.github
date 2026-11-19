@@ -1,4 +1,4 @@
-# Reusable RASGO CI, static sites (Nuxt) (5-desarrollo/github.md of RASGO OS): task-code branch, tests, lint and build.
+# Reusable RASGO CI, static sites (Nuxt) (7-oficio/github.md of RASGO OS): task-code branch, tests, lint and build.
 # Usage in each repository (.github/workflows/ci.yml):
 #
 #   name: CI
@@ -29,7 +29,7 @@ jobs:
         run: |
           if printf '%s' "$BRANCH" | grep -Eq '^(dependabot/|release-please--)'; then exit 0; fi
           if ! printf '%s' "$BRANCH" | grep -Eq '^[A-Z][A-Z0-9]*-[0-9]+-[A-Za-z0-9._-]+$'; then
-            echo "La rama $BRANCH no empieza por el código de una tarea de Plane y un número (5-desarrollo/github.md)."
+            echo "La rama $BRANCH no empieza por el código de una tarea de Plane y un número (7-oficio/github.md)."
             exit 1
           fi
 
@@ -52,7 +52,7 @@ jobs:
         run: npm test --if-present
 
   # The one check the ruleset of main asks for in a repository that calls this workflow: "ci / ci" is green only when
-  # no job above failed or was cancelled (a skipped one is fine). 5-desarrollo/github.md of RASGO OS.
+  # no job above failed or was cancelled (a skipped one is fine). 7-oficio/github.md of RASGO OS.
   ci:
     needs: [branch, node]
     if: ${{ always() }}
