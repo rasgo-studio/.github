@@ -2,7 +2,7 @@
 
 Shared GitHub configuration of the rasgo-studio organization: the default pull request template
 (`.github/PULL_REQUEST_TEMPLATE.md`) and three reusable CI workflows. GitHub only tests: every deploy is Sergio's merge
-into `main`, which the Ploi site of each repository pulls (`5-desarrollo/despliegues.md` of RASGO OS).
+into `main`, which the Ploi site of each repository pulls (`6-infraestructura/despliegues.md` of RASGO OS).
 
 | Workflow | For | What it checks |
 | --- | --- | --- |
@@ -22,4 +22,4 @@ jobs:
 
 Each shared workflow ends with a job `ci` that is green only when nothing above failed, so a calling repository
 reports one check, `ci / ci`: the one its ruleset asks for. The branch check asks for the code of a Plane task and a
-number (`ACME01WEB-23-contact-form`), as `5-desarrollo/github.md` says. This repository is public: no client name, host or secret goes in it.
+number (`ACME01WEB-23-contact-form`), as `7-oficio/github.md` says. This repository is public: no client name, host or secret goes in it.

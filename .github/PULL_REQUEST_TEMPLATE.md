@@ -1,8 +1,8 @@
 ## Resumen
-<!-- Título del PR: el código de la tarea y qué hace, en castellano: «ACME01WEB-23 Formulario de contacto» (5-desarrollo/github.md de RASGO OS). -->
+<!-- Título del PR: el código de la tarea y qué hace, en castellano: «ACME01WEB-23 Formulario de contacto» (7-oficio/github.md de RASGO OS). -->
 
 ### Tarea
-<!-- Enlace a la tarea de Plane (ACME01WEB-23) y a su spec: ligera, en la tarea, o completa, en specs/ACME01WEB-23.md de esta PR (5-desarrollo/specs.md). -->
+<!-- Enlace a la tarea de Plane (ACME01WEB-23) y a su spec: ligera, en la tarea, o completa, en specs/ACME01WEB-23.md de esta PR (7-oficio/specs.md). -->
 - Plane:
 - Spec:
 
